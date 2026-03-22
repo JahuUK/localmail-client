@@ -1,0 +1,17 @@
+node_modules
+dist
+data
+.git
+.local
+.agents
+.cache
+.config
+.env
+.replit
+.upm
+attached_assets
+replit.md
+screenshots
+*.log
+*.tmp
+install-windows.ps1

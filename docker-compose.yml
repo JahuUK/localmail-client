@@ -1,0 +1,25 @@
+services:
+  localmail:
+    build: .
+    container_name: localmail
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data
+    environment:
+      # ---------------------------------------------------------------
+      # REQUIRED: Change this before going live.
+      # Generate a unique key with: openssl rand -hex 32
+      # This key encrypts all stored emails and account passwords.
+      # If you lose it, your data cannot be decrypted.
+      # Keep a secure copy of this value — back it up separately.
+      # ---------------------------------------------------------------
+      - ENCRYPTION_KEY=REPLACE_WITH_OUTPUT_OF__openssl_rand_-hex_32
+
+      # ---------------------------------------------------------------
+      # Admin account created on first boot (if no users exist yet).
+      # Change both values before starting the container.
+      # ---------------------------------------------------------------
+      - ADMIN_USERNAME=admin
+      - ADMIN_PASSWORD=REPLACE_WITH_A_STRONG_PASSWORD
+    restart: unless-stopped

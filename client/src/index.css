@@ -1,0 +1,456 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --font-sans: 'Inter', sans-serif;
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  
+  --color-background: hsl(var(--background));
+  --color-foreground: hsl(var(--foreground));
+  --color-card: hsl(var(--card));
+  --color-card-foreground: hsl(var(--card-foreground));
+  --color-popover: hsl(var(--popover));
+  --color-popover-foreground: hsl(var(--popover-foreground));
+  --color-primary: hsl(var(--primary));
+  --color-primary-foreground: hsl(var(--primary-foreground));
+  --color-secondary: hsl(var(--secondary));
+  --color-secondary-foreground: hsl(var(--secondary-foreground));
+  --color-muted: hsl(var(--muted));
+  --color-muted-foreground: hsl(var(--muted-foreground));
+  --color-accent: hsl(var(--accent));
+  --color-accent-foreground: hsl(var(--accent-foreground));
+  --color-destructive: hsl(var(--destructive));
+  --color-destructive-foreground: hsl(var(--destructive-foreground));
+  --color-border: hsl(var(--border));
+  --color-input: hsl(var(--input));
+  --color-ring: hsl(var(--ring));
+}
+
+:root {
+  --background: 0 0% 100%;
+  --foreground: 222.2 84% 4.9%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 222.2 84% 4.9%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 222.2 84% 4.9%;
+
+  --primary: 221.2 83.2% 53.3%;
+  --primary-foreground: 210 40% 98%;
+
+  --secondary: 210 40% 96.1%;
+  --secondary-foreground: 222.2 47.4% 11.2%;
+
+  --muted: 210 40% 96.1%;
+  --muted-foreground: 215.4 16.3% 46.9%;
+
+  --accent: 210 40% 96.1%;
+  --accent-foreground: 222.2 47.4% 11.2%;
+
+  --destructive: 0 84.2% 60.2%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 214.3 31.8% 91.4%;
+  --input: 214.3 31.8% 91.4%;
+  --ring: 221.2 83.2% 53.3%;
+
+  --radius: 0.5rem;
+}
+
+.dark {
+  --background: 222.2 84% 4.9%;
+  --foreground: 210 40% 98%;
+
+  --card: 222.2 84% 4.9%;
+  --card-foreground: 210 40% 98%;
+
+  --popover: 222.2 84% 4.9%;
+  --popover-foreground: 210 40% 98%;
+
+  --primary: 217.2 91.2% 59.8%;
+  --primary-foreground: 222.2 47.4% 11.2%;
+
+  --secondary: 217.2 32.6% 17.5%;
+  --secondary-foreground: 210 40% 98%;
+
+  --muted: 217.2 32.6% 17.5%;
+  --muted-foreground: 215 20.2% 65.1%;
+
+  --accent: 217.2 32.6% 17.5%;
+  --accent-foreground: 210 40% 98%;
+
+  --destructive: 0 62.8% 30.6%;
+  --destructive-foreground: 210 40% 98%;
+
+  --border: 217.2 32.6% 17.5%;
+  --input: 217.2 32.6% 17.5%;
+  --ring: 212.7 26.8% 83.9%;
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply font-sans antialiased bg-background text-foreground overflow-hidden;
+  }
+}
+
+.email-html-body {
+  display: block;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Arial, sans-serif;
+  font-size: 14px;
+  line-height: 1.6;
+  color: #202124;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+  text-align: left;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.email-html-body > table,
+.email-html-body > div > table,
+.email-html-body > center > table,
+.email-html-body > div[align="center"] > table {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.email-html-body table[align="center"] {
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.email-html-body div[align="center"],
+.email-html-body center {
+  text-align: center;
+}
+
+.email-html-body div[align="center"] > *,
+.email-html-body center > * {
+  text-align: left;
+}
+
+.email-html-body table {
+  border-collapse: collapse;
+  max-width: 100%;
+}
+
+.email-html-body td,
+.email-html-body th {
+  word-break: break-word;
+}
+
+.email-html-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+.email-html-body a {
+  color: #1a73e8;
+  text-decoration: underline;
+}
+
+.email-html-body blockquote {
+  border-left: 3px solid #dadce0;
+  margin: 8px 0;
+  padding: 4px 12px;
+  color: #5f6368;
+}
+
+.email-html-body pre,
+.email-html-body code {
+  background: #f6f8fc;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 13px;
+}
+
+.email-html-body pre {
+  padding: 12px;
+  overflow-x: auto;
+}
+
+.email-html-body h1, .email-html-body h2, .email-html-body h3,
+.email-html-body h4, .email-html-body h5, .email-html-body h6 {
+  margin-top: 16px;
+  margin-bottom: 8px;
+  line-height: 1.3;
+}
+
+.email-html-body p {
+  margin: 8px 0;
+}
+
+.email-html-body ul, .email-html-body ol {
+  padding-left: 24px;
+  margin: 8px 0;
+}
+
+.email-html-body li {
+  margin: 4px 0;
+}
+
+.email-html-body hr {
+  border: none;
+  border-top: 1px solid #e0e0e0;
+  margin: 16px 0;
+}
+
+@media print {
+  body {
+    overflow: visible !important;
+    background: white !important;
+  }
+
+  [data-testid="sidebar"],
+  [data-testid="compose-panel"],
+  [data-testid="button-back"],
+  [data-testid="button-compose"],
+  .email-toolbar-actions,
+  .email-bottom-actions,
+  nav,
+  header,
+  footer,
+  button,
+  .no-print {
+    display: none !important;
+  }
+
+  [data-testid="email-view"] {
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    padding: 20px !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    height: auto !important;
+  }
+
+  [data-radix-scroll-area-viewport],
+  [data-testid="email-view"] > div {
+    overflow: visible !important;
+    height: auto !important;
+    max-height: none !important;
+  }
+
+  .email-html-body {
+    font-size: 12pt !important;
+    line-height: 1.5 !important;
+    color: black !important;
+  }
+
+  .email-html-body a {
+    color: black !important;
+    text-decoration: underline !important;
+  }
+
+  * {
+    box-shadow: none !important;
+  }
+}
+
+.dark body,
+.dark {
+  color-scheme: dark;
+  background-color: #1e1e1e !important;
+  color: #e8eaed !important;
+}
+
+.dark [class*="bg-[#f6f8fc]"],
+.dark [class*="bg-[#fafbfd]"],
+.dark [class*="bg-[#eaf1fb]"] {
+  background-color: #1e1e1e !important;
+}
+
+.dark [class*="bg-white"]:not([class*="rounded-full"][class*="absolute"]),
+.dark .bg-white:not([class*="rounded-full"][class*="absolute"]) {
+  background-color: #2b2b2b !important;
+}
+
+.dark [class*="hover:bg-white\\/20"]:hover {
+  background-color: rgba(255,255,255,0.15) !important;
+}
+
+.dark [class*="bg-[#f2f2f2]"] {
+  background-color: #252525 !important;
+}
+
+.dark [class*="bg-[#f1f3f4]"] {
+  background-color: #353535 !important;
+}
+
+.dark [class*="text-[#202124]"],
+.dark [class*="text-[#001d35]"] {
+  color: #e8eaed !important;
+}
+
+.dark [class*="text-[#5f6368]"],
+.dark [class*="text-[#444746]"],
+.dark [class*="text-[#3c4043]"] {
+  color: #bdc1c6 !important;
+}
+
+.dark [class*="text-[#b06000]"] {
+  color: #f5c462 !important;
+}
+
+.dark [class*="text-[#c5221f]"] {
+  color: #f28b82 !important;
+}
+
+.dark [class*="border-[#dadce0]"],
+.dark [class*="border-[#e0e0e0]"],
+.dark [class*="border-[#f0f0f0]"],
+.dark [class*="border-[#f5d565]"],
+.dark [class*="border-[#f5c6c2]"] {
+  border-color: #3c4043 !important;
+}
+
+.dark [class*="bg-[#d3e3fd]"] {
+  background-color: #2d4a68 !important;
+  color: #d2e3fc !important;
+}
+
+.dark [class*="bg-[#c2e7ff]"] {
+  background-color: #1f3d5a !important;
+  color: #8ab4f8 !important;
+}
+
+.dark [class*="bg-[#e8eaed]"] {
+  background-color: #353535 !important;
+}
+
+.dark [class*="bg-[#c2dbff]"] {
+  background-color: #283b54 !important;
+}
+
+.dark [class*="bg-[#e8f0fe]"] {
+  background-color: #283b54 !important;
+}
+
+.dark [class*="bg-[#fef7e0]"] {
+  background-color: #3e3000 !important;
+}
+
+.dark [class*="bg-[#fce8e6]"] {
+  background-color: #3e1515 !important;
+}
+
+.dark [class*="bg-[#404040]"] {
+  background-color: #2b2b2b !important;
+}
+
+.dark [class*="hover:bg-[#e8eaed]"]:hover {
+  background-color: #353535 !important;
+  --tw-bg-opacity: 1 !important;
+}
+
+.dark [class*="hover:bg-[#f1f3f4]"]:hover {
+  background-color: #353535 !important;
+}
+
+.dark [class*="hover:bg-[#dadce0]"]:hover {
+  background-color: #353535 !important;
+}
+
+.dark [class*="hover:bg-[#f6f8fc]"]:hover {
+  background-color: #303030 !important;
+}
+
+.dark [class*="hover:bg-[#e0e0e0]"]:hover {
+  background-color: #353535 !important;
+}
+
+.dark [class*="ring-[#1a73e8]"] {
+  --tw-ring-color: #8ab4f8 !important;
+}
+
+.dark [class*="ring-[#c2e7ff]"] {
+  --tw-ring-color: #8ab4f8 !important;
+}
+
+.dark input,
+.dark textarea,
+.dark select {
+  background-color: #2b2b2b !important;
+  color: #e8eaed !important;
+  border-color: #3c4043 !important;
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: #9aa0a6 !important;
+}
+
+.dark [data-radix-scroll-area-viewport] {
+  background-color: transparent !important;
+}
+
+.dark [data-radix-popper-content-wrapper] [role="listbox"],
+.dark [data-radix-popper-content-wrapper] [role="menu"],
+.dark [data-radix-popper-content-wrapper] > div {
+  background-color: #2b2b2b !important;
+  border-color: #3c4043 !important;
+  color: #e8eaed !important;
+}
+
+.dark [role="dialog"],
+.dark [data-state="open"][class*="fixed"] {
+  background-color: #2b2b2b !important;
+  color: #e8eaed !important;
+}
+
+.dark .border-b,
+.dark .border-r,
+.dark .border-l,
+.dark .border-t {
+  border-color: #3c4043 !important;
+}
+
+.dark .divide-y > * + * {
+  border-color: #3c4043 !important;
+}
+
+.dark .shadow-sm,
+.dark .shadow-md,
+.dark .shadow-lg {
+  box-shadow: 0 1px 3px rgba(0,0,0,0.6) !important;
+}
+
+.dark .hover\:shadow-sm:hover,
+.dark .hover\:shadow-lg:hover {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.6) !important;
+}
+
+.dark [class*="hover:shadow-\\[inset"]:hover {
+  box-shadow: inset 1px 0 0 #3c4043, inset -1px 0 0 #3c4043, 0 1px 2px 0 rgba(0,0,0,.4), 0 1px 3px 1px rgba(0,0,0,.3) !important;
+}
+
+.dark [class*="rounded-r-full"][class*="text-sm"] {
+  border: 1px solid #444 !important;
+  border-right: none !important;
+  margin-bottom: 2px;
+}
+
+.dark [class*="rounded-r-full"][class*="bg-[#d3e3fd]"],
+.dark [class*="rounded-r-full"][class*="bg-[#c2e7ff]"] {
+  border-color: #6a9fd8 !important;
+  border-right: none !important;
+}
+
+.dark [class*="rounded-2xl"][class*="bg-white"],
+.dark [class*="rounded-2xl"].bg-white {
+  background-color: #262626 !important;
+}
