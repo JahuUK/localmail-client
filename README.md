@@ -4,6 +4,7 @@
 
 A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface, without relying on any third-party cloud service. Your data never leaves your machine.
 
+Made in response to GMail getting rid of POP3 functionality, as I knew I'd miss all my emails being amalgamated into one email interface. So it's obviously *very* similar to GMail in design for that reason. I'll probably get a warning...
 ---
 
 ## Features
