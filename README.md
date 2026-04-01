@@ -2,7 +2,7 @@
 
 [![Docker Hub](https://img.shields.io/docker/pulls/jahuuk/localmail-app?logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/jahuuk/localmail-app)
 
-A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface, without relying on any third-party cloud service. Your data never leaves your machine. Made in response to GMail getting rid of POP3 functionality, as I knew I'd miss all my emails being amalgamated into one email interface. So it's obviously *very* similar to GMail in design for that reason. I'll probably get a warning...
+A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface, without relying on any third-party cloud service. Your data never leaves your machine.
 
 ---
 
@@ -411,6 +411,20 @@ The official image is published at [`jahuuk/localmail-app`](https://hub.docker.c
 docker pull jahuuk/localmail-app:latest
 ```
 
+### Pushing a new release
+
+```bash
+# Build and tag
+docker build -t jahuuk/localmail-app:latest .
+docker tag jahuuk/localmail-app:latest jahuuk/localmail-app:1.0.0
+
+# Push
+docker login
+docker push jahuuk/localmail-app:latest
+docker push jahuuk/localmail-app:1.0.0
+```
+
+---
 
 ## License
 

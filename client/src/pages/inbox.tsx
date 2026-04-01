@@ -70,6 +70,7 @@ import {
   CloudUpload,
   RotateCcw,
   Play,
+  ChevronUp,
 } from "lucide-react";
 import { format, isToday, isThisYear } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -97,6 +98,10 @@ const FOLDERS = [
   { id: "spam", label: "Spam", icon: AlertCircle },
 ];
 
+function normalizeSubject(subject: string): string {
+  return (subject || "").replace(/^(Re|Fwd?|RE|FW?)(\[\d+\])?:\s*/gi, "").trim().toLowerCase();
+}
+
 function formatEmailDate(dateStr: string, clockFormat: "12h" | "24h" = "12h") {
   const d = new Date(dateStr);
   if (isToday(d)) return format(d, clockFormat === "24h" ? "HH:mm" : "h:mm a");
@@ -114,6 +119,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [activeLabel, setActiveLabel] = useState<string | null>(null);
   const [activeAccount, setActiveAccount] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
+  const [selectedThreadEmails, setSelectedThreadEmails] = useState<Email[] | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeDefaults, setComposeDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string} | null>(null);
@@ -363,6 +369,15 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
 
   const handleBack = () => {
     setSelectedEmailId(null);
+    setSelectedThreadEmails(null);
+  };
+
+  const handleSelectThread = (threadEmails: Email[]) => {
+    setSelectedThreadEmails(threadEmails);
+    setSelectedEmailId(null);
+    threadEmails.filter(e => e.isUnread).forEach(e => {
+      readMutation.mutate({ id: e.id, isUnread: false });
+    });
   };
 
   const sanitizeForCompose = (html: string) => {
@@ -473,6 +488,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setActiveLabel(null);
     setActiveAccount(null);
     setSelectedEmailId(null);
+    setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
     setSearchQuery("");
     setCurrentPage(1);
@@ -483,6 +499,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setActiveFolder("");
     setActiveAccount(null);
     setSelectedEmailId(null);
+    setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
     setSearchQuery("");
     setCurrentPage(1);
@@ -493,6 +510,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setActiveFolder("");
     setActiveLabel(null);
     setSelectedEmailId(null);
+    setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
     setSearchQuery("");
     setCurrentPage(1);
@@ -615,7 +633,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                     <folder.icon className="w-[18px] h-[18px]" />
                     {!sidebarCollapsed && <span>{folder.label}</span>}
                   </div>
-                  {!sidebarCollapsed && (unreadCounts[folder.id] || 0) > 0 && (
+                  {!sidebarCollapsed && folder.id !== "trash" && (unreadCounts[folder.id] || 0) > 0 && (
                     <span className="text-xs font-semibold">{unreadCounts[folder.id]}</span>
                   )}
                 </button>
@@ -972,8 +990,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
           )}
         </header>
 
-        {/* Email List OR Email View */}
-        {!selectedEmail ? (
+        {/* Email List OR Thread View OR Email View */}
+        {!selectedEmail && !selectedThreadEmails ? (
           <div className="flex-1 flex flex-col min-h-0">
             <EmailList
               emails={emails}
@@ -986,20 +1004,41 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
               selectedIds={selectedEmailIds}
               onToggleSelect={toggleEmailSelection}
               clockFormat={settings?.clockFormat || "12h"}
+              conversationView={settings?.conversationView !== false}
+              customFolders={customFolders}
+              onArchive={(id) => { archiveMutation.mutate(id); }}
+              onDelete={(id) => { deleteMutation.mutate(id); }}
+              onMarkRead={(id, isUnread) => readMutation.mutate({ id, isUnread })}
+              onMoveToFolder={(id, folder) => bulkMoveMutation.mutate({ ids: [id], folder })}
+              onAddLabel={(emailId, labelId) => addLabelMutation.mutate({ emailId, labelId })}
+              onSelectThread={handleSelectThread}
             />
           </div>
-        ) : (
-          <EmailView
-            email={selectedEmail}
+        ) : selectedThreadEmails ? (
+          <ThreadView
+            emails={selectedThreadEmails}
             labels={labels}
             showLabels={settings?.showLabels !== false}
             onBack={handleBack}
-            onArchive={() => archiveMutation.mutate(selectedEmail.id)}
-            onDelete={() => deleteMutation.mutate(selectedEmail.id)}
-            onStar={() => starMutation.mutate(selectedEmail.id)}
-            onToggleRead={() => readMutation.mutate({ id: selectedEmail.id, isUnread: !selectedEmail.isUnread })}
-            onAddLabel={(labelId) => addLabelMutation.mutate({ emailId: selectedEmail.id, labelId })}
-            onRemoveLabel={(labelId) => removeLabelMutation.mutate({ emailId: selectedEmail.id, labelId })}
+            onArchive={(id) => archiveMutation.mutate(id)}
+            onDelete={(id) => deleteMutation.mutate(id)}
+            onStar={(id) => starMutation.mutate(id)}
+            onToggleRead={(id, isUnread) => readMutation.mutate({ id, isUnread })}
+            clockFormat={settings?.clockFormat || "12h"}
+            onOpenCompose={(defaults) => { setComposeDefaults(defaults); setComposeOpen(true); }}
+          />
+        ) : (
+          <EmailView
+            email={selectedEmail!}
+            labels={labels}
+            showLabels={settings?.showLabels !== false}
+            onBack={handleBack}
+            onArchive={() => archiveMutation.mutate(selectedEmail!.id)}
+            onDelete={() => deleteMutation.mutate(selectedEmail!.id)}
+            onStar={() => starMutation.mutate(selectedEmail!.id)}
+            onToggleRead={() => readMutation.mutate({ id: selectedEmail!.id, isUnread: !selectedEmail!.isUnread })}
+            onAddLabel={(labelId) => addLabelMutation.mutate({ emailId: selectedEmail!.id, labelId })}
+            onRemoveLabel={(labelId) => removeLabelMutation.mutate({ emailId: selectedEmail!.id, labelId })}
             onReply={handleReply}
             onReplyAll={handleReplyAll}
             onForward={handleForward}
@@ -1033,6 +1072,14 @@ function EmailList({
   selectedIds,
   onToggleSelect,
   clockFormat,
+  conversationView,
+  customFolders,
+  onArchive,
+  onDelete,
+  onMarkRead,
+  onMoveToFolder,
+  onAddLabel,
+  onSelectThread,
 }: {
   emails: Email[];
   isLoading: boolean;
@@ -1044,10 +1091,56 @@ function EmailList({
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   clockFormat: "12h" | "24h";
+  conversationView: boolean;
+  customFolders: CustomFolder[];
+  onArchive: (id: string) => void;
+  onDelete: (id: string) => void;
+  onMarkRead: (id: string, isUnread: boolean) => void;
+  onMoveToFolder: (id: string, folder: string) => void;
+  onAddLabel: (emailId: string, labelId: string) => void;
+  onSelectThread: (emails: Email[]) => void;
 }) {
   const getLabelById = (id: string) => labels.find(l => l.id === id);
-
   const rowHeight = displayDensity === "compact" ? "h-8" : displayDensity === "comfortable" ? "h-12" : "h-10";
+
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; email: Email } | null>(null);
+  const [ctxSubMenu, setCtxSubMenu] = useState<"folder" | "label" | null>(null);
+
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    document.addEventListener("click", close);
+    document.addEventListener("scroll", close, true);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", close);
+      document.removeEventListener("scroll", close, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [ctxMenu]);
+
+  const threads = useMemo(() => {
+    if (!conversationView) return emails.map(e => [e]);
+    const map = new Map<string, Email[]>();
+    for (const email of [...emails].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())) {
+      const key = normalizeSubject(email.subject) || email.id;
+      if (!map.has(key)) map.set(key, []);
+      map.get(key)!.push(email);
+    }
+    const groups = Array.from(map.values());
+    groups.sort((a, b) => {
+      const latestA = Math.max(...a.map(e => new Date(e.date).getTime()));
+      const latestB = Math.max(...b.map(e => new Date(e.date).getTime()));
+      return latestB - latestA;
+    });
+    return groups;
+  }, [emails, conversationView]);
+
+  const allFolders = [
+    ...FOLDERS.filter(f => !["starred", "snoozed", "all"].includes(f.id)),
+    ...customFolders.map(cf => ({ id: `custom:${cf.id}`, label: cf.name })),
+  ];
 
   if (isLoading) {
     return <div className="flex-1 flex items-center justify-center text-sm text-[#5f6368]">Loading...</div>;
@@ -1063,117 +1156,443 @@ function EmailList({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden">
+    <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
       <div className="pb-16">
-        {emails.map((email) => (
-          <div
-            key={email.id}
-            onClick={() => onSelect(email)}
-            draggable
-            onDragStart={(e) => {
-              const ids = selectedIds.has(email.id) && selectedIds.size > 1
-                ? Array.from(selectedIds)
-                : [email.id];
-              e.dataTransfer.setData("application/localmail-ids", JSON.stringify(ids));
-              e.dataTransfer.effectAllowed = "move";
-              const count = ids.length;
-              const ghost = document.createElement("div");
-              ghost.textContent = count > 1 ? `${count} conversations` : (email.subject || "(no subject)");
-              ghost.style.cssText = "position:absolute;top:-1000px;padding:6px 12px;background:#1a73e8;color:white;border-radius:8px;font-size:13px;font-family:sans-serif;white-space:nowrap;";
-              document.body.appendChild(ghost);
-              e.dataTransfer.setDragImage(ghost, 0, 0);
-              requestAnimationFrame(() => document.body.removeChild(ghost));
-            }}
-            className={`flex items-center ${rowHeight} px-2 border-b border-[#f0f0f0] cursor-pointer group transition-colors min-w-0 overflow-hidden ${
-              selectedIds.has(email.id) ? "bg-[#c2dbff]" : email.isUnread ? "bg-white" : "bg-[#f2f2f2]"
-            } hover:shadow-[inset_1px_0_0_#dadce0,_inset_-1px_0_0_#dadce0,_0_1px_2px_0_rgba(60,64,67,.3),_0_1px_3px_1px_rgba(60,64,67,.15)] hover:z-10 relative`}
-            data-testid={`email-row-${email.id}`}
-          >
-            {/* Checkbox area */}
-            <div className="w-10 flex-shrink-0 flex items-center justify-center" onClick={(e) => { e.stopPropagation(); }}>
-              <input type="checkbox" checked={selectedIds.has(email.id)} onChange={() => onToggleSelect(email.id)} className="w-[18px] h-[18px] accent-[#1a73e8] cursor-pointer rounded-sm" data-testid={`checkbox-email-${email.id}`} />
-            </div>
+        {threads.map((threadEmails) => {
+          const latestEmail = threadEmails[threadEmails.length - 1];
+          const hasUnread = threadEmails.some(e => e.isUnread);
+          const hasAttachments = threadEmails.some(e => e.hasAttachments);
+          const count = threadEmails.length;
+          const uniqueSenders = Array.from(new Set(threadEmails.map(e => e.sender.name)));
+          const senderDisplay = uniqueSenders.length > 2
+            ? `${uniqueSenders[0]}, ${uniqueSenders[1]} +${uniqueSenders.length - 2}`
+            : uniqueSenders.join(", ");
 
-            {/* Star */}
-            <button
-              onClick={(e) => { e.stopPropagation(); onStar(email.id); }}
-              className="w-8 flex-shrink-0 flex items-center justify-center"
-              title={email.isStarred ? "Starred" : "Not starred"}
-              data-testid={`button-star-${email.id}`}
+          return (
+            <div
+              key={latestEmail.id}
+              onClick={() => {
+                if (count > 1 && conversationView) {
+                  onSelectThread(threadEmails);
+                } else {
+                  onSelect(latestEmail);
+                }
+              }}
+              draggable
+              onDragStart={(e) => {
+                const ids = selectedIds.has(latestEmail.id) && selectedIds.size > 1
+                  ? Array.from(selectedIds)
+                  : [latestEmail.id];
+                e.dataTransfer.setData("application/localmail-ids", JSON.stringify(ids));
+                e.dataTransfer.effectAllowed = "move";
+                const ghost = document.createElement("div");
+                ghost.textContent = ids.length > 1 ? `${ids.length} conversations` : (latestEmail.subject || "(no subject)");
+                ghost.style.cssText = "position:absolute;top:-1000px;padding:6px 12px;background:#1a73e8;color:white;border-radius:8px;font-size:13px;font-family:sans-serif;white-space:nowrap;";
+                document.body.appendChild(ghost);
+                e.dataTransfer.setDragImage(ghost, 0, 0);
+                requestAnimationFrame(() => document.body.removeChild(ghost));
+              }}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtxMenu({ x: e.clientX, y: e.clientY, email: latestEmail });
+                setCtxSubMenu(null);
+              }}
+              className={`flex items-center ${rowHeight} px-2 border-b border-[#f0f0f0] cursor-pointer group transition-colors min-w-0 overflow-hidden ${
+                selectedIds.has(latestEmail.id) ? "bg-[#c2dbff]" : hasUnread ? "bg-white" : "bg-[#f2f2f2]"
+              } hover:shadow-[inset_1px_0_0_#dadce0,_inset_-1px_0_0_#dadce0,_0_1px_2px_0_rgba(60,64,67,.3),_0_1px_3px_1px_rgba(60,64,67,.15)] hover:z-10 relative`}
+              data-testid={`email-row-${latestEmail.id}`}
             >
-              <Star className={`h-[18px] w-[18px] ${
-                email.isStarred
-                  ? "fill-[#f4b400] text-[#f4b400]"
-                  : "text-[#c4c7c5] group-hover:text-[#5f6368]"
-              }`} />
+              {/* Checkbox */}
+              <div className="w-10 flex-shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                <input type="checkbox" checked={selectedIds.has(latestEmail.id)} onChange={() => onToggleSelect(latestEmail.id)} className="w-[18px] h-[18px] accent-[#1a73e8] cursor-pointer rounded-sm" data-testid={`checkbox-email-${latestEmail.id}`} />
+              </div>
+
+              {/* Star */}
+              <button
+                onClick={(e) => { e.stopPropagation(); onStar(latestEmail.id); }}
+                className="w-8 flex-shrink-0 flex items-center justify-center"
+                title={latestEmail.isStarred ? "Starred" : "Not starred"}
+                data-testid={`button-star-${latestEmail.id}`}
+              >
+                <Star className={`h-[18px] w-[18px] ${latestEmail.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5] group-hover:text-[#5f6368]"}`} />
+              </button>
+
+              {/* Sender(s) */}
+              <div className={`w-[100px] lg:w-[140px] xl:w-[200px] flex-shrink-0 truncate text-[13px] pl-2 ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
+                {senderDisplay}
+                {conversationView && count > 1 && (
+                  <span className="ml-1 text-[11px] text-[#5f6368] font-normal">({count})</span>
+                )}
+              </div>
+
+              {/* Account tag + Subject + Labels + Snippet */}
+              <div className="flex-1 flex items-center min-w-0 gap-1 px-2 overflow-hidden">
+                {latestEmail.accountEmail && (() => {
+                  const accountLabel = labels.find(l => l.name === latestEmail.accountEmail);
+                  const tagColor = accountLabel?.color || "#1a73e8";
+                  return (
+                    <span className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: tagColor + "18", color: tagColor, borderWidth: 1, borderColor: tagColor + "40" }} data-testid={`tag-account-${latestEmail.id}`}>
+                      {latestEmail.accountEmail}
+                    </span>
+                  );
+                })()}
+                {latestEmail.sendStatus === "sending" && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fef7e0] text-[#b06000] border border-[#f5d565]" data-testid={`status-sending-${latestEmail.id}`}>Sending...</span>
+                )}
+                {latestEmail.sendStatus === "failed" && (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={latestEmail.sendError} data-testid={`status-failed-${latestEmail.id}`}>Send failed</span>
+                )}
+                <span className={`truncate text-[13px] ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
+                  {latestEmail.subject}
+                </span>
+                {showLabels && latestEmail.labels && latestEmail.labels.length > 0 && latestEmail.labels.map(lId => {
+                  const lbl = getLabelById(lId);
+                  if (!lbl) return null;
+                  if (latestEmail.accountEmail && lbl.name === latestEmail.accountEmail) return null;
+                  return (
+                    <span key={lId} className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: lbl.color + "18", color: lbl.color, border: `1px solid ${lbl.color}40` }}>
+                      {lbl.name}
+                    </span>
+                  );
+                })}
+                <span className="text-[13px] text-[#5f6368] truncate font-normal">{" "}&mdash; {latestEmail.snippet}</span>
+              </div>
+
+              {/* Attachment indicator */}
+              {hasAttachments && (
+                <div className="w-5 flex-shrink-0 flex items-center justify-center" title="Has attachments">
+                  <Paperclip className="h-3.5 w-3.5 text-[#5f6368]" />
+                </div>
+              )}
+
+              {/* Date */}
+              <div className={`w-[75px] flex-shrink-0 text-right text-[12px] pr-2 xl:pr-4 whitespace-nowrap ${hasUnread ? "font-bold text-[#202124]" : "text-[#5f6368]"}`}>
+                {formatEmailDate(latestEmail.date, clockFormat)}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Context Menu */}
+      {ctxMenu && (
+        <div
+          className="fixed z-50 bg-white border border-[#dadce0] rounded-lg shadow-xl py-1 text-sm text-[#3c4043] min-w-[190px]"
+          style={{ left: Math.min(ctxMenu.x, window.innerWidth - 200), top: Math.min(ctxMenu.y, window.innerHeight - 280) }}
+          onClick={(e) => e.stopPropagation()}
+          data-testid="context-menu"
+        >
+          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onStar(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-star">
+            <Star className="h-4 w-4 flex-shrink-0" />{ctxMenu.email.isStarred ? "Remove star" : "Add star"}
+          </button>
+          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onMarkRead(ctxMenu.email.id, !ctxMenu.email.isUnread); setCtxMenu(null); }} data-testid="ctx-read">
+            <MailOpen className="h-4 w-4 flex-shrink-0" />{ctxMenu.email.isUnread ? "Mark as read" : "Mark as unread"}
+          </button>
+          <div className="border-t border-[#f0f0f0] my-1" />
+          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onArchive(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-archive">
+            <Archive className="h-4 w-4 flex-shrink-0" />Archive
+          </button>
+          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onDelete(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-delete">
+            <Trash2 className="h-4 w-4 flex-shrink-0" />Move to Trash
+          </button>
+          <div className="border-t border-[#f0f0f0] my-1" />
+          <div className="relative" onMouseEnter={() => setCtxSubMenu("folder")} onMouseLeave={() => setCtxSubMenu(null)}>
+            <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center justify-between gap-2" data-testid="ctx-move">
+              <span className="flex items-center gap-2.5"><FolderInput className="h-4 w-4 flex-shrink-0" />Move to</span>
+              <ChevronRight className="h-3.5 w-3.5 text-[#5f6368]" />
             </button>
-
-            {/* Sender - bold for unread, normal for read */}
-            <div className={`w-[100px] lg:w-[140px] xl:w-[200px] flex-shrink-0 truncate text-[13px] pl-2 ${
-              email.isUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"
-            }`}>
-              {email.sender.name}
-            </div>
-
-            {/* Account tag + Subject + Labels + Snippet */}
-            <div className="flex-1 flex items-center min-w-0 gap-1 px-2 overflow-hidden">
-              {/* Account email tag */}
-              {email.accountEmail && (() => {
-                const accountLabel = labels.find(l => l.name === email.accountEmail);
-                const tagColor = accountLabel?.color || "#1a73e8";
-                return (
-                  <span className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: tagColor + "18", color: tagColor, borderWidth: 1, borderColor: tagColor + "40" }} data-testid={`tag-account-${email.id}`}>
-                    {email.accountEmail}
-                  </span>
-                );
-              })()}
-              {email.sendStatus === "sending" && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fef7e0] text-[#b06000] border border-[#f5d565]" data-testid={`status-sending-${email.id}`}>
-                  Sending...
-                </span>
-              )}
-              {email.sendStatus === "failed" && (
-                <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={email.sendError} data-testid={`status-failed-${email.id}`}>
-                  Send failed
-                </span>
-              )}
-              {/* Subject - bold for unread, normal for read */}
-              <span className={`truncate text-[13px] ${
-                email.isUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"
-              }`}>
-                {email.subject}
-              </span>
-              {showLabels && email.labels && email.labels.length > 0 && email.labels.map(lId => {
-                const lbl = getLabelById(lId);
-                if (!lbl) return null;
-                if (email.accountEmail && lbl.name === email.accountEmail) return null;
-                return (
-                  <span
-                    key={lId}
-                    className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0"
-                    style={{
-                      backgroundColor: lbl.color + "18",
-                      color: lbl.color,
-                      border: `1px solid ${lbl.color}40`,
-                    }}
-                  >
-                    {lbl.name}
-                  </span>
-                );
-              })}
-              {/* Snippet - always unbolded */}
-              <span className="text-[13px] text-[#5f6368] truncate font-normal">
-                {" "}&mdash; {email.snippet}
-              </span>
-            </div>
-
-            {/* Date */}
-            <div className={`w-[75px] flex-shrink-0 text-right text-[12px] pr-2 xl:pr-4 whitespace-nowrap ${
-              email.isUnread ? "font-bold text-[#202124]" : "text-[#5f6368]"
-            }`}>
-              {formatEmailDate(email.date, clockFormat)}
-            </div>
+            {ctxSubMenu === "folder" && (
+              <div className="absolute left-full top-0 bg-white border border-[#dadce0] rounded-lg shadow-xl py-1 min-w-[150px] z-50">
+                {allFolders.map(f => (
+                  <button key={f.id} className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] text-sm" onClick={() => { onMoveToFolder(ctxMenu.email.id, f.id); setCtxMenu(null); }}>
+                    {f.label}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
+          {labels.length > 0 && (
+            <div className="relative" onMouseEnter={() => setCtxSubMenu("label")} onMouseLeave={() => setCtxSubMenu(null)}>
+              <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center justify-between gap-2" data-testid="ctx-label">
+                <span className="flex items-center gap-2.5"><Tag className="h-4 w-4 flex-shrink-0" />Label as</span>
+                <ChevronRight className="h-3.5 w-3.5 text-[#5f6368]" />
+              </button>
+              {ctxSubMenu === "label" && (
+                <div className="absolute left-full top-0 bg-white border border-[#dadce0] rounded-lg shadow-xl py-1 min-w-[150px] z-50">
+                  {labels.map(l => (
+                    <button key={l.id} className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5 text-sm" onClick={() => { onAddLabel(ctxMenu.email.id, l.id); setCtxMenu(null); }}>
+                      <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: l.color }} />
+                      {l.name}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThreadEmailCard({
+  email,
+  expanded,
+  onToggle,
+  clockFormat,
+  onStar,
+  onReply,
+  onReplyAll,
+  onForward,
+}: {
+  email: Email;
+  expanded: boolean;
+  onToggle: () => void;
+  clockFormat: "12h" | "24h";
+  onStar: () => void;
+  onReply: (fullEmail: Email) => void;
+  onReplyAll: (fullEmail: Email) => void;
+  onForward: (fullEmail: Email) => void;
+}) {
+  const fullEmailQuery = useQuery<Email>({
+    queryKey: [`/api/emails/${email.id}`],
+    enabled: expanded,
+  });
+  const fullEmail = fullEmailQuery.data || email;
+
+  const sanitizedHtml = useMemo(() => {
+    if (!expanded || !fullEmail.bodyHtml) return "";
+    let html = fullEmail.bodyHtml;
+    if (fullEmail.attachments) {
+      for (const att of fullEmail.attachments) {
+        if (att.cid) {
+          html = html.replace(
+            new RegExp(`cid:${att.cid.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'g'),
+            `/api/emails/${email.id}/attachments/${att.id}`
+          );
+        }
+      }
+    }
+    DOMPurify.addHook('afterSanitizeAttributes', (node) => {
+      if (node.tagName === 'A') {
+        node.setAttribute('target', '_blank');
+        node.setAttribute('rel', 'noopener noreferrer');
+      }
+    });
+    const result = DOMPurify.sanitize(html, {
+      FORBID_TAGS: ['script', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+      ADD_ATTR: ['target', 'rel', 'align', 'valign', 'width', 'height', 'bgcolor', 'cellpadding', 'cellspacing', 'border', 'background', 'style'],
+      ADD_TAGS: ['img', 'picture', 'source'],
+      ALLOW_DATA_ATTR: false,
+    });
+    DOMPurify.removeHook('afterSanitizeAttributes');
+    return result;
+  }, [expanded, fullEmail.bodyHtml, fullEmail.attachments, email.id]);
+
+  const toLine = email.to?.map(t => t.name || t.email).join(", ") || "";
+
+  return (
+    <div className="border border-[#dadce0] rounded-xl overflow-hidden bg-white dark:bg-[#2d2e30] dark:border-[#3c4043] shadow-sm">
+      <div
+        className="flex items-center px-4 py-3 cursor-pointer hover:bg-[#f6f8fc] dark:hover:bg-[#35363a] gap-3 select-none"
+        onClick={onToggle}
+        data-testid={`thread-card-${email.id}`}
+      >
+        <div className="w-8 h-8 rounded-full bg-[#1a73e8] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
+          {(email.sender.name || email.sender.email).charAt(0).toUpperCase()}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2">
+            <span className={`text-sm ${email.isUnread ? "font-bold text-[#202124] dark:text-[#e8eaed]" : "text-[#3c4043] dark:text-[#bdc1c6]"}`}>
+              {email.sender.name || email.sender.email}
+            </span>
+            {!expanded && (
+              <span className="text-xs text-[#5f6368] truncate">{email.snippet}</span>
+            )}
+          </div>
+          {expanded && toLine && (
+            <div className="text-xs text-[#5f6368] truncate">to {toLine}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 ml-2 flex-shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); onStar(); }}
+            title={email.isStarred ? "Remove star" : "Add star"}
+            className="p-1 rounded-full hover:bg-[#f1f3f4] dark:hover:bg-[#3c4043]"
+          >
+            <Star className={`h-4 w-4 ${email.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5]"}`} />
+          </button>
+          <span className="text-xs text-[#5f6368] whitespace-nowrap">{formatEmailDate(email.date, clockFormat)}</span>
+          {expanded ? <ChevronUp className="h-4 w-4 text-[#5f6368]" /> : <ChevronDown className="h-4 w-4 text-[#5f6368]" />}
+        </div>
+      </div>
+
+      {expanded && (
+        <div className="border-t border-[#f0f0f0] dark:border-[#3c4043]">
+          {fullEmailQuery.isLoading ? (
+            <div className="py-12 text-center text-sm text-[#5f6368]">
+              <Loader2 className="h-5 w-5 animate-spin mx-auto" />
+            </div>
+          ) : (
+            <div className="px-6 py-4">
+              {fullEmail.bodyHtml ? (
+                <div className="email-html-body overflow-x-auto" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+              ) : (
+                <pre className="text-sm text-[#3c4043] dark:text-[#bdc1c6] whitespace-pre-wrap font-sans leading-relaxed">{fullEmail.body}</pre>
+              )}
+              {fullEmail.attachments && fullEmail.attachments.some((a: { cid?: string }) => !a.cid) && (
+                <AttachmentPreview attachments={fullEmail.attachments} emailId={email.id} />
+              )}
+              <div className="mt-5 flex gap-2 flex-wrap">
+                <Button size="sm" variant="outline" className="rounded-full px-4 h-8 text-[#3c4043] border-[#dadce0] hover:bg-[#f1f3f4]" onClick={() => onReply(fullEmail)} data-testid={`thread-reply-${email.id}`}>
+                  <Reply className="h-3.5 w-3.5 mr-1.5" />Reply
+                </Button>
+                <Button size="sm" variant="outline" className="rounded-full px-4 h-8 text-[#3c4043] border-[#dadce0] hover:bg-[#f1f3f4]" onClick={() => onReplyAll(fullEmail)} data-testid={`thread-replyall-${email.id}`}>
+                  <ReplyAll className="h-3.5 w-3.5 mr-1.5" />Reply all
+                </Button>
+                <Button size="sm" variant="outline" className="rounded-full px-4 h-8 text-[#3c4043] border-[#dadce0] hover:bg-[#f1f3f4]" onClick={() => onForward(fullEmail)} data-testid={`thread-forward-${email.id}`}>
+                  <Forward className="h-3.5 w-3.5 mr-1.5" />Forward
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThreadView({
+  emails,
+  onBack,
+  onArchive,
+  onDelete,
+  onStar,
+  onToggleRead,
+  clockFormat,
+  onOpenCompose,
+}: {
+  emails: Email[];
+  labels: EmailLabel[];
+  showLabels: boolean;
+  onBack: () => void;
+  onArchive: (id: string) => void;
+  onDelete: (id: string) => void;
+  onStar: (id: string) => void;
+  onToggleRead: (id: string, isUnread: boolean) => void;
+  clockFormat: "12h" | "24h";
+  onOpenCompose: (defaults: { to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string }) => void;
+}) {
+  const sorted = useMemo(() =>
+    [...emails].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()),
+    [emails]
+  );
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set([sorted[sorted.length - 1]?.id]));
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+
+  const threadSubject = sorted[0]?.subject.replace(/^(Re|Fwd?|RE|FW?)(\[\d+\])?:\s*/gi, "").trim() || "(no subject)";
+
+  const escapeHtml = (str: string) => {
+    const div = document.createElement("div");
+    div.textContent = str;
+    return div.innerHTML;
+  };
+
+  const buildQuotedBody = (em: Email, fullBody: string) => {
+    const dateStr = escapeHtml(format(new Date(em.date), "EEE, MMM d, yyyy 'at' h:mm a"));
+    const senderStr = `${escapeHtml(em.sender.name)} &lt;${escapeHtml(em.sender.email)}&gt;`;
+    const sanitized = DOMPurify.sanitize(fullBody, {
+      FORBID_TAGS: ['script', 'style', 'iframe', 'object', 'embed', 'form', 'input', 'textarea', 'button'],
+      FORBID_ATTR: ['onerror', 'onload', 'onclick', 'onmouseover', 'onfocus', 'onblur'],
+      ALLOW_DATA_ATTR: false,
+    });
+    return `<br><br><div class="gmail_quote"><div style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex"><p>On ${dateStr}, ${senderStr} wrote:</p>${sanitized}</div></div>`;
+  };
+
+  const handleReply = (fullEmail: Email) => {
+    const reSubject = fullEmail.subject.startsWith("Re:") ? fullEmail.subject : `Re: ${fullEmail.subject}`;
+    onOpenCompose({
+      to: fullEmail.sender.email,
+      subject: reSubject,
+      body: buildQuotedBody(fullEmail, fullEmail.bodyHtml || fullEmail.body),
+      inReplyTo: fullEmail.messageId,
+    });
+  };
+
+  const handleReplyAll = (fullEmail: Email) => {
+    const allTo = [fullEmail.sender, ...(fullEmail.to || []), ...(fullEmail.cc || [])]
+      .filter((p, i, arr) => arr.findIndex(x => x.email === p.email) === i)
+      .map(p => p.email)
+      .join(", ");
+    const reSubject = fullEmail.subject.startsWith("Re:") ? fullEmail.subject : `Re: ${fullEmail.subject}`;
+    onOpenCompose({
+      to: allTo,
+      subject: reSubject,
+      body: buildQuotedBody(fullEmail, fullEmail.bodyHtml || fullEmail.body),
+      inReplyTo: fullEmail.messageId,
+    });
+  };
+
+  const handleForward = (fullEmail: Email) => {
+    const dateStr = format(new Date(fullEmail.date), "EEE, MMM d, yyyy 'at' h:mm a");
+    const toStr = (fullEmail.to || []).map(t => `${escapeHtml(t.name)} &lt;${escapeHtml(t.email)}&gt;`).join(", ");
+    const fwdHeader = `<br><br>---------- Forwarded message ---------<br>From: ${escapeHtml(fullEmail.sender.name)} &lt;${escapeHtml(fullEmail.sender.email)}&gt;<br>Date: ${dateStr}<br>Subject: ${escapeHtml(fullEmail.subject)}<br>To: ${toStr}<br><br>`;
+    const fwdSubject = fullEmail.subject.startsWith("Fwd:") ? fullEmail.subject : `Fwd: ${fullEmail.subject}`;
+    onOpenCompose({
+      subject: fwdSubject,
+      body: fwdHeader + (fullEmail.bodyHtml || `<pre>${fullEmail.body}</pre>`),
+    });
+  };
+
+  return (
+    <div className="flex flex-col h-full bg-[#f6f8fc] dark:bg-[#1f2123]">
+      {/* Header */}
+      <div className="bg-white dark:bg-[#2d2e30] border-b border-[#e0e0e0] dark:border-[#3c4043] px-4 py-3 flex items-center gap-3 flex-shrink-0">
+        <button
+          onClick={onBack}
+          className="p-1.5 rounded-full hover:bg-[#f1f3f4] dark:hover:bg-[#3c4043] text-[#5f6368]"
+          title="Back"
+          data-testid="thread-back-button"
+        >
+          <ArrowLeft className="h-5 w-5" />
+        </button>
+        <h2 className="text-xl font-normal text-[#202124] dark:text-[#e8eaed] flex-1 truncate">{threadSubject}</h2>
+        <span className="text-sm text-[#5f6368] flex-shrink-0">{emails.length} message{emails.length !== 1 ? "s" : ""}</span>
+        <div className="flex items-center gap-1 ml-2">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Archive all" onClick={() => { emails.forEach(e => onArchive(e.id)); onBack(); }} data-testid="thread-archive-all">
+            <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Delete all" onClick={() => { emails.forEach(e => onDelete(e.id)); onBack(); }} data-testid="thread-delete-all">
+            <Trash2 className="h-[18px] w-[18px] text-[#5f6368]" />
+          </Button>
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Mark all as read" onClick={() => emails.filter(e => e.isUnread).forEach(e => onToggleRead(e.id, false))} data-testid="thread-mark-read-all">
+            <MailOpen className="h-[18px] w-[18px] text-[#5f6368]" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Email cards */}
+      <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-4 space-y-2" data-testid="thread-email-list">
+        {sorted.map(email => (
+          <ThreadEmailCard
+            key={email.id}
+            email={email}
+            expanded={expandedIds.has(email.id)}
+            onToggle={() => toggleExpanded(email.id)}
+            clockFormat={clockFormat}
+            onStar={() => onStar(email.id)}
+            onReply={handleReply}
+            onReplyAll={handleReplyAll}
+            onForward={handleForward}
+          />
         ))}
       </div>
     </div>
@@ -3963,45 +4382,6 @@ function GeneralSettingsPanel() {
 
         <DefaultSendAccountSetting value={s.defaultSendAccountId || ""} onChange={(id) => update({ defaultSendAccountId: id })} />
 
-        <div className="space-y-1.5">
-          <Label className="text-xs text-[#5f6368]">Undo send window</Label>
-          <div className="flex gap-2">
-            {[0, 5, 10, 20, 30].map(sec => (
-              <button
-                key={sec}
-                onClick={() => update({ sendCancellation: sec })}
-                className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
-                  s.sendCancellation === sec
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-undo-${sec}`}
-              >
-                {sec === 0 ? "Off" : `${sec}s`}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-[#5f6368]">
-            {s.sendCancellation === 0 ? "Messages will be sent immediately." : `You'll have ${s.sendCancellation} seconds to undo after clicking Send.`}
-          </p>
-        </div>
-
-        <div className="space-y-1.5">
-          <Label className="text-xs text-[#5f6368]">Signature</Label>
-          <textarea
-            value={s.signature}
-            onChange={(e) => update({ signature: e.target.value })}
-            placeholder="Add a signature that will be appended to your outgoing emails..."
-            className="w-full border border-[#dadce0] rounded-lg p-3 text-sm outline-none focus:border-[#0b57d0] min-h-[80px] resize-none"
-            data-testid="input-signature"
-          />
-          {s.signature && (
-            <div className="border border-[#e0e0e0] rounded-lg p-3 bg-[#fafbfd]">
-              <div className="text-xs text-[#5f6368] mb-1">Preview:</div>
-              <div className="text-sm text-[#202124] whitespace-pre-wrap">{s.signature}</div>
-            </div>
-          )}
-        </div>
       </div>
     </div>
   );
@@ -4641,6 +5021,106 @@ function BackupSettings() {
   );
 }
 
+const FOLDER_COLORS = ["#5f6368", "#1a73e8", "#16a765", "#f5a623", "#a142f4", "#e37400", "#e91e63", "#4caf50", "#00bcd4", "#795548"];
+
+function FolderRow({ folder, onUpdate, onDelete }: { folder: CustomFolder; onUpdate: (id: string, updates: Partial<CustomFolder>) => void; onDelete: (id: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState(folder.name);
+  const [showColorPicker, setShowColorPicker] = useState(false);
+  const customColorRef = useRef<HTMLInputElement>(null);
+
+  const handleSave = () => {
+    if (editName.trim() && editName !== folder.name) {
+      onUpdate(folder.id, { name: editName.trim() });
+    }
+    setEditing(false);
+  };
+
+  const handleColorChange = (color: string) => {
+    onUpdate(folder.id, { color });
+    setShowColorPicker(false);
+  };
+
+  return (
+    <div className="flex items-center justify-between p-2.5 border border-[#dadce0] rounded-lg bg-white group">
+      <div className="flex items-center gap-3 flex-1 min-w-0">
+        <div className="relative">
+          <button
+            onClick={() => setShowColorPicker(!showColorPicker)}
+            className="w-5 h-5 rounded-sm flex-shrink-0 cursor-pointer hover:ring-2 hover:ring-offset-1 hover:ring-[#1a73e8] transition-all flex items-center justify-center"
+            style={{ backgroundColor: folder.color }}
+            title="Change color"
+            data-testid={`button-folder-color-${folder.id}`}
+          >
+            <Folder className="w-3 h-3 text-white opacity-70" />
+          </button>
+          {showColorPicker && (
+            <div className="absolute left-0 top-7 z-20 bg-white border border-[#dadce0] rounded-lg shadow-lg p-2 w-[210px]">
+              <div className="flex flex-wrap gap-1.5">
+                {FOLDER_COLORS.map(c => (
+                  <button
+                    key={c}
+                    onClick={() => handleColorChange(c)}
+                    className={`w-6 h-6 rounded-full transition-all ${folder.color === c ? "ring-2 ring-offset-1 ring-[#1a73e8]" : "hover:scale-110"}`}
+                    style={{ backgroundColor: c }}
+                    data-testid={`button-folder-pick-color-${c}`}
+                  />
+                ))}
+              </div>
+              <div className="mt-2 pt-2 border-t border-[#e0e0e0] flex items-center gap-2">
+                <div
+                  className="w-6 h-6 rounded-full border-2 border-dashed border-[#dadce0] flex items-center justify-center cursor-pointer hover:border-[#1a73e8] transition-colors overflow-hidden relative"
+                  onClick={() => customColorRef.current?.click()}
+                  title="Pick custom color"
+                  data-testid="button-folder-custom-color"
+                >
+                  <Plus className="h-3 w-3 text-[#5f6368]" />
+                  <input
+                    ref={customColorRef}
+                    type="color"
+                    defaultValue={folder.color}
+                    onChange={(e) => onUpdate(folder.id, { color: e.target.value })}
+                    onBlur={() => setShowColorPicker(false)}
+                    className="absolute inset-0 opacity-0 cursor-pointer"
+                  />
+                </div>
+                <span className="text-xs text-[#5f6368]">Custom color</span>
+              </div>
+            </div>
+          )}
+        </div>
+        {editing ? (
+          <input
+            value={editName}
+            onChange={(e) => setEditName(e.target.value)}
+            onBlur={handleSave}
+            onKeyDown={(e) => { if (e.key === "Enter") handleSave(); if (e.key === "Escape") { setEditName(folder.name); setEditing(false); } }}
+            className="text-sm text-[#202124] outline-none border-b border-[#0b57d0] bg-transparent flex-1 min-w-0"
+            autoFocus
+            data-testid={`input-folder-rename-${folder.id}`}
+          />
+        ) : (
+          <span
+            className="text-sm text-[#202124] cursor-pointer hover:text-[#0b57d0] truncate"
+            onClick={() => { setEditName(folder.name); setEditing(true); }}
+            data-testid={`text-folder-name-${folder.id}`}
+          >
+            {folder.name}
+          </span>
+        )}
+      </div>
+      <div className="flex items-center gap-1 ml-2">
+        {!editing && (
+          <>
+            <button onClick={() => { setEditName(folder.name); setEditing(true); }} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Rename"><Pencil className="h-3.5 w-3.5" /></button>
+            <button onClick={() => onDelete(folder.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#f1f3f4] text-[#5f6368] hover:text-red-500" title="Delete"><Trash2 className="h-3.5 w-3.5" /></button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function FoldersSettings() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4648,12 +5128,10 @@ function FoldersSettings() {
   const foldersQuery = useQuery<CustomFolder[]>({ queryKey: ["/api/custom-folders"] });
   const folders = foldersQuery.data || [];
 
-  const COLORS = ["#5f6368", "#1a73e8", "#16a765", "#f5a623", "#a142f4", "#e37400", "#e91e63", "#4caf50", "#00bcd4", "#795548"];
-
   const [newName, setNewName] = useState("");
-  const [newColor, setNewColor] = useState("#5f6368");
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+  const [newColor, setNewColor] = useState("#1a73e8");
+  const [showNewColorPicker, setShowNewColorPicker] = useState(false);
+  const newCustomColorRef = useRef<HTMLInputElement>(null);
 
   const createMutation = useMutation({
     mutationFn: async () => {
@@ -4663,7 +5141,7 @@ function FoldersSettings() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/custom-folders"] });
       toast({ title: "Folder created" });
-      setNewName(""); setNewColor("#5f6368");
+      setNewName(""); setNewColor("#1a73e8");
     },
     onError: (err: Error) => {
       toast({ title: "Failed to create folder", description: err.message, variant: "destructive" });
@@ -4677,7 +5155,6 @@ function FoldersSettings() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/custom-folders"] });
-      setEditingId(null);
     },
   });
 
@@ -4696,36 +5173,17 @@ function FoldersSettings() {
     <div className="p-6 space-y-6">
       <div>
         <h3 className="text-base font-medium text-[#202124] mb-1">Custom Folders</h3>
-        <p className="text-xs text-[#5f6368]">Create custom folders to organize your emails. Drag and drop emails into folders from the sidebar.</p>
+        <p className="text-xs text-[#5f6368]">Create custom folders to organize your emails. Click the colour swatch to change a folder's colour. Drag and drop emails into folders from the sidebar.</p>
       </div>
 
       <div className="space-y-2">
         {folders.map(f => (
-          <div key={f.id} className="flex items-center justify-between p-2.5 border border-[#dadce0] rounded-lg bg-white group">
-            <div className="flex items-center gap-3 flex-1 min-w-0">
-              <Folder className="w-4 h-4 flex-shrink-0" style={{ color: f.color }} />
-              {editingId === f.id ? (
-                <div className="flex items-center gap-2 flex-1">
-                  <Input value={editName} onChange={(e) => setEditName(e.target.value)} className="h-7 text-sm" autoFocus onKeyDown={(e) => { if (e.key === "Enter" && editName.trim()) { updateMutation.mutate({ id: f.id, updates: { name: editName.trim() } }); } if (e.key === "Escape") setEditingId(null); }} />
-                  <button onClick={() => { if (editName.trim()) updateMutation.mutate({ id: f.id, updates: { name: editName.trim() } }); }} className="p-1 rounded hover:bg-[#f1f3f4] text-[#1a73e8]"><Check className="h-3.5 w-3.5" /></button>
-                  <button onClick={() => setEditingId(null)} className="p-1 rounded hover:bg-[#f1f3f4] text-[#5f6368]"><X className="h-3.5 w-3.5" /></button>
-                </div>
-              ) : (
-                <span className="text-sm text-[#202124] truncate">{f.name}</span>
-              )}
-            </div>
-            {editingId !== f.id && (
-              <div className="flex items-center gap-1">
-                <div className="flex gap-1 mr-2">
-                  {COLORS.slice(0, 5).map(c => (
-                    <button key={c} onClick={() => updateMutation.mutate({ id: f.id, updates: { color: c } })} className={`w-4 h-4 rounded-full opacity-0 group-hover:opacity-100 transition-all ${f.color === c ? "ring-1 ring-offset-1 ring-[#1a73e8] opacity-100" : ""}`} style={{ backgroundColor: c }} />
-                  ))}
-                </div>
-                <button onClick={() => { setEditingId(f.id); setEditName(f.name); }} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#f1f3f4] text-[#5f6368]"><Pencil className="h-3.5 w-3.5" /></button>
-                <button onClick={() => deleteMutation.mutate(f.id)} className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-[#f1f3f4] text-[#5f6368] hover:text-red-500"><Trash2 className="h-3.5 w-3.5" /></button>
-              </div>
-            )}
-          </div>
+          <FolderRow
+            key={f.id}
+            folder={f}
+            onUpdate={(id, updates) => updateMutation.mutate({ id, updates })}
+            onDelete={(id) => deleteMutation.mutate(id)}
+          />
         ))}
         {folders.length === 0 && (
           <p className="text-sm text-[#5f6368] py-4 text-center">No custom folders yet. Create one below.</p>
@@ -4738,19 +5196,48 @@ function FoldersSettings() {
         <h4 className="text-sm font-medium text-[#202124]">Create new folder</h4>
         <div className="space-y-1.5">
           <Label className="text-xs text-[#5f6368]">Name</Label>
-          <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Folder name" data-testid="input-folder-name" />
+          <Input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="Folder name" onKeyDown={(e) => { if (e.key === "Enter" && newName.trim()) createMutation.mutate(); }} data-testid="input-folder-name" />
         </div>
         <div className="space-y-1.5">
           <Label className="text-xs text-[#5f6368]">Color</Label>
-          <div className="flex flex-wrap gap-2">
-            {COLORS.map(c => (
-              <button key={c} onClick={() => setNewColor(c)} className={`w-7 h-7 rounded-full transition-all ${newColor === c ? "ring-2 ring-offset-2 ring-[#1a73e8]" : ""}`} style={{ backgroundColor: c }} />
+          <div className="flex items-center gap-2 flex-wrap">
+            {FOLDER_COLORS.map(c => (
+              <button
+                key={c}
+                onClick={() => { setNewColor(c); setShowNewColorPicker(false); }}
+                className={`w-7 h-7 rounded-full transition-all ${newColor === c ? "ring-2 ring-offset-2 ring-[#1a73e8]" : "hover:scale-110"}`}
+                style={{ backgroundColor: c }}
+                data-testid={`button-new-folder-color-${c}`}
+              />
             ))}
+            <div className="relative">
+              <div
+                className="w-7 h-7 rounded-full border-2 border-dashed border-[#dadce0] flex items-center justify-center cursor-pointer hover:border-[#1a73e8] transition-colors overflow-hidden relative"
+                onClick={() => newCustomColorRef.current?.click()}
+                title="Pick custom color"
+                data-testid="button-new-folder-custom-color"
+                style={!FOLDER_COLORS.includes(newColor) ? { backgroundColor: newColor, borderStyle: "solid" } : {}}
+              >
+                {FOLDER_COLORS.includes(newColor) ? <Plus className="h-3.5 w-3.5 text-[#5f6368]" /> : null}
+                <input
+                  ref={newCustomColorRef}
+                  type="color"
+                  value={newColor}
+                  onChange={(e) => setNewColor(e.target.value)}
+                  className="absolute inset-0 opacity-0 cursor-pointer"
+                />
+              </div>
+            </div>
           </div>
         </div>
-        <Button onClick={() => createMutation.mutate()} disabled={!newName || createMutation.isPending} className="rounded-full px-6" style={{ backgroundColor: "#0b57d0" }} data-testid="button-create-folder">
-          {createMutation.isPending ? "Creating..." : "Create Folder"}
-        </Button>
+        <div className="flex items-center gap-3">
+          <div className="w-7 h-7 rounded-sm flex items-center justify-center" style={{ backgroundColor: newColor }}>
+            <Folder className="w-4 h-4 text-white opacity-80" />
+          </div>
+          <Button onClick={() => createMutation.mutate()} disabled={!newName.trim() || createMutation.isPending} className="rounded-full px-6" style={{ backgroundColor: "#0b57d0" }} data-testid="button-create-folder">
+            {createMutation.isPending ? "Creating..." : "Create Folder"}
+          </Button>
+        </div>
       </div>
     </div>
   );
