@@ -163,7 +163,11 @@ function startTrashPurgeTimer() {
         const purged = await storage.purgeExpiredTrash();
         if (purged > 0) {
           addLog(user.id, "info", "Trash purge", `Removed ${purged} expired emails from Trash`);
-          console.log(`Trash purge: Removed ${purged} emails for user ${user.username}`);
+        }
+        const spamPurged = await storage.purgeExpiredSpam();
+        if (spamPurged > 0) {
+          addLog(user.id, "info", "Spam purge", `Removed ${spamPurged} expired emails from Spam`);
+          console.log(`Spam purge: Removed ${spamPurged} emails for user ${user.username}`);
         }
       } catch (err: any) {
         addLog(user.id, "error", "Trash purge", `Error: ${err.message}`);
@@ -352,9 +356,30 @@ export async function registerRoutes(
     const search = req.query.search as string | undefined;
     const label = req.query.label as string | undefined;
     const account = req.query.account as string | undefined;
+    const hasAttachment = req.query.hasAttachment === "1";
+    const unreadOnly = req.query.unread === "1";
+    const starredOnly = req.query.starred === "1";
+    const dateRange = req.query.dateRange as string | undefined;
+    const searchBody = req.query.searchBody === "1";
+    const scopeAll = req.query.scope === "all";
 
-    if (search) {
-      const emails = await storage.searchEmails(search);
+    const hasFilters = search || hasAttachment || unreadOnly || starredOnly || dateRange || searchBody;
+
+    if (hasFilters) {
+      // When scope is "all", search across all folders but exclude trash unless user is in trash
+      const excludeTrash = scopeAll ? (folder !== "trash") : false;
+      const emails = await storage.searchEmails({
+        query: search || "",
+        folder: scopeAll ? undefined : folder,
+        label: scopeAll ? undefined : label,
+        account: scopeAll ? undefined : account,
+        excludeTrash,
+        hasAttachment,
+        unreadOnly,
+        starredOnly,
+        dateRange,
+        searchBody,
+      });
       return res.json(emails);
     }
 
@@ -507,20 +532,9 @@ export async function registerRoutes(
     const userId = req.session.userId!;
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ message: "ids must be an array" });
-    let trashed = 0, deleted = 0;
-    for (const id of ids) {
-      const email = await storage.getEmail(id);
-      if (!email) continue;
-      if (email.folder === "trash") {
-        await storage.deleteEmail(id);
-        addLog(userId, "info", "Email", `Permanently deleted email "${email.subject}" from ${email.sender?.email || "unknown"}`);
-        deleted++;
-      } else {
-        await storage.moveEmail(id, "trash");
-        addLog(userId, "info", "Email", `Moved email "${email.subject}" to Trash`);
-        trashed++;
-      }
-    }
+    const { trashed, deleted } = await storage.bulkDeleteEmails(ids);
+    if (trashed > 0) addLog(userId, "info", "Email", `Moved ${trashed} email(s) to Trash`);
+    if (deleted > 0) addLog(userId, "info", "Email", `Permanently deleted ${deleted} email(s)`);
     res.json({ trashed, deleted });
   });
 
@@ -612,6 +626,45 @@ export async function registerRoutes(
         });
     } else {
       addLog(userId, "info", "Compose", `Email composed to ${to} (local only, no SMTP account)`);
+    }
+  });
+
+  app.post("/api/emails/:id/unsubscribe", requireAuth, async (req, res) => {
+    const storage = getUserStorage(req);
+    const email = await storage.getEmail(req.params.id);
+    if (!email) return res.status(404).json({ message: "Email not found" });
+
+    const { listUnsubscribeUrl, listUnsubscribeMail, listUnsubscribeOneClick } = email;
+
+    if (!listUnsubscribeUrl && !listUnsubscribeMail) {
+      return res.status(400).json({ message: "This email has no unsubscribe information." });
+    }
+
+    if (listUnsubscribeUrl && listUnsubscribeOneClick) {
+      try {
+        const response = await fetch(listUnsubscribeUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: "List-Unsubscribe=One-Click",
+          signal: AbortSignal.timeout(10000),
+        });
+        if (response.ok) {
+          return res.json({ type: "success" });
+        }
+      } catch {}
+      return res.json({ type: "url", url: listUnsubscribeUrl });
+    }
+
+    if (listUnsubscribeUrl) {
+      return res.json({ type: "url", url: listUnsubscribeUrl });
+    }
+
+    if (listUnsubscribeMail) {
+      const qIndex = listUnsubscribeMail.indexOf("?");
+      const to = qIndex === -1 ? listUnsubscribeMail : listUnsubscribeMail.slice(0, qIndex);
+      const params = new URLSearchParams(qIndex === -1 ? "" : listUnsubscribeMail.slice(qIndex + 1));
+      const subject = params.get("subject") || "Unsubscribe";
+      return res.json({ type: "mailto", to, subject });
     }
   });
 

@@ -254,6 +254,35 @@ export async function fetchEmails(account: MailAccount): Promise<ParsedEmailResu
   return fetchPop3Emails(account);
 }
 
+function parseListUnsubscribeHeaders(headers: any): {
+  url?: string;
+  mail?: string;
+  oneClick?: boolean;
+} {
+  const result: { url?: string; mail?: string; oneClick?: boolean } = {};
+  try {
+    const listUnsub: string = headers?.get?.("list-unsubscribe") || "";
+    const listUnsubPost: string = headers?.get?.("list-unsubscribe-post") || "";
+    if (listUnsub) {
+      const parts = listUnsub.split(",").map((p: string) => p.trim());
+      for (const part of parts) {
+        const match = part.match(/^<(.+)>$/);
+        if (!match) continue;
+        const value = match[1];
+        if ((value.startsWith("https://") || value.startsWith("http://")) && !result.url) {
+          result.url = value;
+        } else if (value.startsWith("mailto:") && !result.mail) {
+          result.mail = value.slice(7);
+        }
+      }
+    }
+    if (listUnsubPost && listUnsubPost.toLowerCase().includes("list-unsubscribe=one-click")) {
+      result.oneClick = true;
+    }
+  } catch {}
+  return result;
+}
+
 async function parseRawEmail(rawStr: string): Promise<ParsedEmailResult | null> {
   const { simpleParser } = await import("mailparser") as any;
   const parsed = await (simpleParser as any)(rawStr) as any;
@@ -283,6 +312,7 @@ async function parseRawEmail(rawStr: string): Promise<ParsedEmailResult | null> 
   }
 
   const msgId = parsed.messageId || undefined;
+  const unsub = parseListUnsubscribeHeaders(parsed.headers);
 
   return {
     email: {
@@ -304,6 +334,9 @@ async function parseRawEmail(rawStr: string): Promise<ParsedEmailResult | null> 
       folder: "inbox",
       attachments: attachmentMeta.length > 0 ? attachmentMeta : undefined,
       messageId: msgId,
+      ...(unsub.url ? { listUnsubscribeUrl: unsub.url } : {}),
+      ...(unsub.mail ? { listUnsubscribeMail: unsub.mail } : {}),
+      ...(unsub.oneClick ? { listUnsubscribeOneClick: true } : {}),
     },
     rawAttachments,
   };

@@ -107,6 +107,7 @@ interface EmailIndex {
   hasAttachments?: boolean;
   accountEmail?: string;
   trashedAt?: string;
+  spammedAt?: string;
   messageId?: string;
   sendStatus?: "sending" | "sent" | "failed";
   sendError?: string;
@@ -177,6 +178,7 @@ export class UserStorage {
       sendCancellation: 5,
       signature: "",
       trashRetentionDays: 30,
+      spamRetentionDays: 30,
       defaultSendAccountId: "",
       emailsPerPage: 20,
       darkMode: false,
@@ -291,6 +293,7 @@ export class UserStorage {
           hasAttachments: !!(email.attachments && email.attachments.length > 0),
           accountEmail: email.accountEmail,
           trashedAt: email.trashedAt,
+          spammedAt: email.spammedAt,
           messageId: email.messageId,
           sendStatus: email.sendStatus,
           sendError: email.sendError,
@@ -441,6 +444,7 @@ export class UserStorage {
       hasAttachments: !!(email.attachments && email.attachments.length > 0),
       accountEmail: email.accountEmail,
       trashedAt: email.trashedAt,
+      spammedAt: email.spammedAt,
       messageId: email.messageId,
       sendStatus: email.sendStatus,
       sendError: email.sendError,
@@ -467,6 +471,7 @@ export class UserStorage {
       if (updates.attachments !== undefined) idx.hasAttachments = updates.attachments.length > 0;
       if (updates.accountEmail !== undefined) idx.accountEmail = updates.accountEmail;
       if (updates.trashedAt !== undefined) idx.trashedAt = updates.trashedAt;
+      if (updates.spammedAt !== undefined) idx.spammedAt = updates.spammedAt;
       if (updates.sendStatus !== undefined) idx.sendStatus = updates.sendStatus;
       if (updates.sendError !== undefined) idx.sendError = updates.sendError;
     }
@@ -490,11 +495,17 @@ export class UserStorage {
   }
 
   async moveEmail(id: string, folder: string): Promise<Email | undefined> {
+    const now = new Date().toISOString();
     const updates: Partial<Email> = { folder };
     if (folder === "trash") {
-      updates.trashedAt = new Date().toISOString();
+      updates.trashedAt = now;
+      updates.spammedAt = undefined;
+    } else if (folder === "spam") {
+      updates.spammedAt = now;
+      updates.trashedAt = undefined;
     } else {
       updates.trashedAt = undefined;
+      updates.spammedAt = undefined;
     }
     return this.updateEmail(id, updates);
   }
@@ -510,41 +521,71 @@ export class UserStorage {
   }
 
   async bulkUpdateEmails(ids: string[], updates: Partial<Email>): Promise<number> {
-    let count = 0;
+    const validIds: string[] = [];
     for (const id of ids) {
       const idx = this.emailIndex.get(id);
       if (!idx) continue;
-
-      let needsFileWrite = false;
-      for (const key of Object.keys(updates) as (keyof Email)[]) {
-        if (!["isUnread", "isStarred", "folder", "labels", "trashedAt"].includes(key)) {
-          needsFileWrite = true;
-          break;
-        }
-      }
-
+      // Update in-memory index immediately
       if (updates.isUnread !== undefined) idx.isUnread = updates.isUnread;
       if (updates.isStarred !== undefined) idx.isStarred = updates.isStarred;
       if (updates.folder !== undefined) idx.folder = updates.folder;
       if (updates.labels !== undefined) idx.labels = updates.labels;
       if (updates.trashedAt !== undefined) idx.trashedAt = updates.trashedAt;
-
-      if (needsFileWrite) {
-        const email = this.readEmailFile(id);
-        if (email) {
-          const updated = { ...email, ...updates, id };
-          this.writeEmailFile(id, updated);
-        }
-      } else {
-        const email = this.readEmailFile(id);
-        if (email) {
-          const updated = { ...email, ...updates, id };
-          this.writeEmailFile(id, updated);
-        }
-      }
-      count++;
+      if (updates.spammedAt !== undefined) idx.spammedAt = updates.spammedAt;
+      validIds.push(id);
     }
-    return count;
+    // Write files to disk in background after index is updated
+    setImmediate(() => {
+      for (const id of validIds) {
+        try {
+          const email = this.readEmailFile(id);
+          if (email) this.writeEmailFile(id, { ...email, ...updates, id });
+        } catch {}
+      }
+    });
+    return validIds.length;
+  }
+
+  async bulkDeleteEmails(ids: string[]): Promise<{ trashed: number; deleted: number }> {
+    const toTrash: string[] = [];
+    const toDelete: string[] = [];
+    // Classify using in-memory index — zero file reads
+    for (const id of ids) {
+      const idx = this.emailIndex.get(id);
+      if (!idx) continue;
+      if (idx.folder === "trash") toDelete.push(id);
+      else toTrash.push(id);
+    }
+    const trashedAt = new Date().toISOString();
+    // Update in-memory index immediately for trash moves
+    for (const id of toTrash) {
+      const idx = this.emailIndex.get(id);
+      if (idx) { idx.folder = "trash"; idx.trashedAt = trashedAt; }
+    }
+    // Remove from index immediately for permanent deletes
+    for (const id of toDelete) {
+      const idx = this.emailIndex.get(id);
+      if (idx?.messageId) this.deletedMessageIds.add(idx.messageId);
+      this.emailIndex.delete(id);
+    }
+    // Flush to disk in background — response is already on its way
+    setImmediate(() => {
+      for (const id of toTrash) {
+        try {
+          const email = this.readEmailFile(id);
+          if (email) this.writeEmailFile(id, { ...email, folder: "trash", trashedAt });
+        } catch {}
+      }
+      for (const id of toDelete) {
+        this.deleteEmailFile(id);
+        try {
+          const attDir = join(userAttachmentsDir(this.userId), id);
+          if (existsSync(attDir)) rmSync(attDir, { recursive: true });
+        } catch {}
+      }
+      this.scheduleMetaSave();
+    });
+    return { trashed: toTrash.length, deleted: toDelete.length };
   }
 
   getUnreadCounts(): Record<string, number> {
@@ -582,23 +623,77 @@ export class UserStorage {
     return this.updateEmail(emailId, { labels });
   }
 
-  async searchEmails(query: string): Promise<Email[]> {
-    const q = query.toLowerCase();
+  async searchEmails(opts: {
+    query: string;
+    folder?: string;
+    label?: string;
+    account?: string;
+    excludeTrash?: boolean;
+    hasAttachment?: boolean;
+    unreadOnly?: boolean;
+    starredOnly?: boolean;
+    dateRange?: string;
+    searchBody?: boolean;
+  }): Promise<Email[]> {
+    const { folder, label, account, excludeTrash, hasAttachment, unreadOnly, starredOnly, dateRange, searchBody } = opts;
+
+    // Parse keyword operators out of the query
+    let rawQuery = opts.query;
+    let fromFilter = "";
+    let subjectFilter = "";
+    rawQuery = rawQuery.replace(/\bfrom:(\S+)/gi, (_, v) => { fromFilter = v.toLowerCase(); return ""; });
+    rawQuery = rawQuery.replace(/\bsubject:(\S+)/gi, (_, v) => { subjectFilter = v.toLowerCase(); return ""; });
+    if (/\bhas:attachment\b/i.test(rawQuery)) {
+      rawQuery = rawQuery.replace(/\bhas:attachment\b/gi, "").trim();
+    }
+    const q = rawQuery.trim().toLowerCase();
+
+    // Date range cutoff
+    let fromDate: Date | null = null;
+    if (dateRange) {
+      fromDate = new Date();
+      if (dateRange === "7d") fromDate.setDate(fromDate.getDate() - 7);
+      else if (dateRange === "30d") fromDate.setDate(fromDate.getDate() - 30);
+      else if (dateRange === "90d") fromDate.setDate(fromDate.getDate() - 90);
+      else if (dateRange === "1y") fromDate.setFullYear(fromDate.getFullYear() - 1);
+    }
+
     const matching: Email[] = [];
     for (const idx of Array.from(this.emailIndex.values())) {
-      if (
-        idx.subject.toLowerCase().includes(q) ||
-        idx.sender.name.toLowerCase().includes(q) ||
-        idx.sender.email.toLowerCase().includes(q) ||
-        idx.snippet.toLowerCase().includes(q) ||
-        (idx.accountEmail && idx.accountEmail.toLowerCase().includes(q))
-      ) {
-        matching.push({
-          ...idx,
-          body: "",
-          labels: idx.labels || [],
-        });
+      // Scope filters
+      if (excludeTrash && idx.folder === "trash") continue;
+      if (folder && idx.folder !== folder) continue;
+      if (label && !(idx.labels || []).includes(label)) continue;
+      if (account && idx.accountEmail !== account) continue;
+
+      // Attribute filters
+      if (hasAttachment && !idx.hasAttachments) continue;
+      if (unreadOnly && !idx.isUnread) continue;
+      if (starredOnly && !idx.isStarred) continue;
+      if (fromDate && new Date(idx.date) < fromDate) continue;
+      if (fromFilter && !idx.sender.email.toLowerCase().includes(fromFilter) && !idx.sender.name.toLowerCase().includes(fromFilter)) continue;
+      if (subjectFilter && !idx.subject.toLowerCase().includes(subjectFilter)) continue;
+
+      // Text query match
+      if (q) {
+        const inSubject = idx.subject.toLowerCase().includes(q);
+        const inSender = idx.sender.name.toLowerCase().includes(q) || idx.sender.email.toLowerCase().includes(q);
+        const inSnippet = idx.snippet.toLowerCase().includes(q);
+        const inAccount = idx.accountEmail ? idx.accountEmail.toLowerCase().includes(q) : false;
+        let matched = inSubject || inSender || inSnippet || inAccount;
+
+        if (!matched && searchBody) {
+          const full = this.readEmailFile(idx.id);
+          if (full) {
+            const bodyText = (full.body || "").replace(/<[^>]+>/g, " ").toLowerCase();
+            matched = bodyText.includes(q);
+          }
+        }
+
+        if (!matched) continue;
       }
+
+      matching.push({ ...idx, body: "", labels: idx.labels || [] });
     }
     matching.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return matching;
@@ -928,6 +1023,22 @@ export class UserStorage {
       if (idx.folder === "trash" && idx.trashedAt) {
         const trashedTime = new Date(idx.trashedAt).getTime();
         if (now - trashedTime > retentionMs) {
+          await this.deleteEmail(idx.id);
+          purged++;
+        }
+      }
+    }
+    return purged;
+  }
+
+  async purgeExpiredSpam(): Promise<number> {
+    const retentionMs = (this.settings.spamRetentionDays || 30) * 24 * 60 * 60 * 1000;
+    const now = Date.now();
+    let purged = 0;
+    for (const idx of Array.from(this.emailIndex.values())) {
+      if (idx.folder === "spam" && idx.spammedAt) {
+        const spammedTime = new Date(idx.spammedAt).getTime();
+        if (now - spammedTime > retentionMs) {
           await this.deleteEmail(idx.id);
           purged++;
         }

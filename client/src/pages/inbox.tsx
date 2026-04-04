@@ -71,6 +71,8 @@ import {
   RotateCcw,
   Play,
   ChevronUp,
+  ShieldCheck,
+  Ban,
 } from "lucide-react";
 import { format, isToday, isThisYear } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -133,6 +135,13 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
+  const [filterPanelOpen, setFilterPanelOpen] = useState(false);
+  const [filterScope, setFilterScope] = useState<"current" | "all">("current");
+  const [filterHasAttachment, setFilterHasAttachment] = useState(false);
+  const [filterUnread, setFilterUnread] = useState(false);
+  const [filterStarred, setFilterStarred] = useState(false);
+  const [filterDateRange, setFilterDateRange] = useState("");
+  const [filterSearchBody, setFilterSearchBody] = useState(false);
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -142,13 +151,27 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   });
   const settings = settingsQuery.data;
 
-  const queryKey = searchQuery
-    ? `/api/emails?search=${encodeURIComponent(searchQuery)}`
-    : activeLabel
-      ? `/api/emails?label=${activeLabel}`
-      : activeAccount
-        ? `/api/emails?account=${encodeURIComponent(activeAccount)}`
-        : `/api/emails?folder=${activeFolder}`;
+  const activeFiltersCount = [filterHasAttachment, filterUnread, filterStarred, !!filterDateRange, filterSearchBody, filterScope === "all"].filter(Boolean).length;
+  const isFiltering = !!(searchQuery || filterHasAttachment || filterUnread || filterStarred || filterDateRange || filterSearchBody);
+
+  const queryKey = (() => {
+    const p = new URLSearchParams();
+    // Always pass current context
+    if (activeLabel) p.set("label", activeLabel);
+    else if (activeAccount) p.set("account", activeAccount);
+    else p.set("folder", activeFolder);
+
+    if (isFiltering) {
+      if (searchQuery) p.set("search", searchQuery);
+      if (filterScope === "all") p.set("scope", "all");
+      if (filterHasAttachment) p.set("hasAttachment", "1");
+      if (filterUnread) p.set("unread", "1");
+      if (filterStarred) p.set("starred", "1");
+      if (filterDateRange) p.set("dateRange", filterDateRange);
+      if (filterSearchBody) p.set("searchBody", "1");
+    }
+    return `/api/emails?${p.toString()}`;
+  })();
 
   const emailsQuery = useQuery<Email[]>({
     queryKey: [queryKey],
@@ -343,7 +366,98 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     },
   });
 
-  const isBulkBusy = bulkDeleteMutation.isPending || bulkArchiveMutation.isPending || bulkReadMutation.isPending || bulkStarMutation.isPending || bulkMoveMutation.isPending || bulkPermanentDeleteMutation.isPending;
+  const markAsSpamMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/emails/${id}/move`, { folder: "spam" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      setSelectedEmailId(null);
+      toast({ title: "Moved to Spam." });
+    },
+  });
+
+  const notSpamMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("PATCH", `/api/emails/${id}/move`, { folder: "inbox" });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries();
+      setSelectedEmailId(null);
+      toast({ title: "Moved to Inbox." });
+    },
+  });
+
+  const blockSenderMutation = useMutation({
+    mutationFn: async ({ emailId, senderEmail, senderName }: { emailId: string; senderEmail: string; senderName: string }) => {
+      await apiRequest("POST", "/api/rules", {
+        name: `Block ${senderName || senderEmail}`,
+        enabled: true,
+        conditions: [{ field: "from", match: "contains", value: senderEmail }],
+        conditionLogic: "all",
+        action: "move",
+        targetFolder: "spam",
+      });
+      await apiRequest("PATCH", `/api/emails/${emailId}/move`, { folder: "spam" });
+    },
+    onSuccess: (_data, { senderEmail }) => {
+      queryClient.invalidateQueries();
+      setSelectedEmailId(null);
+      toast({ title: `Sender blocked. Future emails from ${senderEmail} will go to Spam.` });
+    },
+  });
+
+  const bulkMarkAsSpamMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const count = ids.length;
+      setSelectedEmailIds(new Set());
+      await apiRequest("POST", "/api/emails/batch/move", { ids, folder: "spam" });
+      return count;
+    },
+    onSuccess: (count: number) => {
+      queryClient.invalidateQueries();
+      toast({ title: `${count} conversation(s) moved to Spam.` });
+    },
+  });
+
+  const bulkNotSpamMutation = useMutation({
+    mutationFn: async (ids: string[]) => {
+      const count = ids.length;
+      setSelectedEmailIds(new Set());
+      await apiRequest("POST", "/api/emails/batch/move", { ids, folder: "inbox" });
+      return count;
+    },
+    onSuccess: (count: number) => {
+      queryClient.invalidateQueries();
+      toast({ title: `${count} conversation(s) moved to Inbox.` });
+    },
+  });
+
+  const unsubscribeMutation = useMutation({
+    mutationFn: async (id: string) => {
+      const res = await apiRequest("POST", `/api/emails/${id}/unsubscribe`);
+      return res.json() as Promise<{ type: "success" | "url" | "mailto"; url?: string; to?: string; subject?: string }>;
+    },
+    onSuccess: (data) => {
+      if (data.type === "success") {
+        toast({ title: "Unsubscribed successfully." });
+      } else if (data.type === "url") {
+        window.open(data.url, "_blank", "noopener,noreferrer");
+        toast({ title: "Unsubscribe page opened in a new tab." });
+      } else if (data.type === "mailto") {
+        setComposeDefaults({ to: data.to, subject: data.subject });
+        setComposeOpen(true);
+        toast({ title: "Compose your unsubscribe email and send it." });
+      }
+    },
+    onError: () => {
+      toast({ title: "Unsubscribe failed", description: "Could not process the unsubscribe request.", variant: "destructive" });
+    },
+  });
+
+  const isBulkBusy = bulkDeleteMutation.isPending || bulkArchiveMutation.isPending || bulkReadMutation.isPending || bulkStarMutation.isPending || bulkMoveMutation.isPending || bulkPermanentDeleteMutation.isPending || bulkMarkAsSpamMutation.isPending || bulkNotSpamMutation.isPending;
 
   const toggleEmailSelection = (id: string) => {
     setSelectedEmailIds(prev => {
@@ -483,6 +597,17 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     } catch {}
   };
 
+  const resetSearchAndFilters = () => {
+    setSearchQuery("");
+    setFilterPanelOpen(false);
+    setFilterScope("current");
+    setFilterHasAttachment(false);
+    setFilterUnread(false);
+    setFilterStarred(false);
+    setFilterDateRange("");
+    setFilterSearchBody(false);
+  };
+
   const handleFolderClick = (folderId: string) => {
     setActiveFolder(folderId);
     setActiveLabel(null);
@@ -490,7 +615,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailId(null);
     setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
-    setSearchQuery("");
+    resetSearchAndFilters();
     setCurrentPage(1);
   };
 
@@ -501,7 +626,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailId(null);
     setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
-    setSearchQuery("");
+    resetSearchAndFilters();
     setCurrentPage(1);
   };
 
@@ -512,7 +637,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailId(null);
     setSelectedThreadEmails(null);
     setSelectedEmailIds(new Set());
-    setSearchQuery("");
+    resetSearchAndFilters();
     setCurrentPage(1);
   };
 
@@ -531,6 +656,14 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
       return () => document.removeEventListener("click", handleClickOutside);
     }
   }, [moveMenuOpen]);
+
+  useEffect(() => {
+    const handleClickOutside = () => { setFilterPanelOpen(false); };
+    if (filterPanelOpen) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
+    }
+  }, [filterPanelOpen]);
 
   const getLabelById = (id: string) => labels.find(l => l.id === id);
 
@@ -814,24 +947,118 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                   className="w-full h-12 pl-12 pr-12 rounded-full text-sm outline-none bg-[#eaf1fb]"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
+                  onFocus={() => setFilterPanelOpen(false)}
                   data-testid="input-search"
                 />
-                {searchQuery && (
+                {(searchQuery || isFiltering) && (
                   <button
-                    onClick={() => setSearchQuery("")}
+                    onClick={() => resetSearchAndFilters()}
                     className="absolute right-12 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-[#dadce0]/60"
                     data-testid="button-clear-search"
+                    title="Clear search and filters"
                   >
                     <X className="w-4 h-4 text-[#5f6368]" />
                   </button>
                 )}
                 <button
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-[#dadce0]/60"
-                  title="Search options"
+                  className={`absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded-full hover:bg-[#dadce0]/60 ${filterPanelOpen ? "bg-[#d3e3fd]" : ""}`}
+                  title="Search filters"
                   data-testid="button-search-options"
+                  onClick={(e) => { e.stopPropagation(); setFilterPanelOpen(v => !v); }}
                 >
-                  <Filter className="w-4 h-4 text-[#5f6368]" />
+                  <Filter className={`w-4 h-4 ${activeFiltersCount > 0 ? "text-[#0b57d0]" : "text-[#5f6368]"}`} />
+                  {activeFiltersCount > 0 && (
+                    <span className="absolute -top-0.5 -right-0.5 bg-[#0b57d0] text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center leading-none">{activeFiltersCount}</span>
+                  )}
                 </button>
+
+                {/* Filter panel dropdown */}
+                {filterPanelOpen && (
+                  <div className="absolute top-14 right-0 z-50 w-72 bg-white border border-[#dadce0] rounded-2xl shadow-xl p-4 text-sm text-[#3c4043]" onClick={e => e.stopPropagation()} data-testid="filter-panel">
+                    <div className="font-medium text-[#202124] mb-3 text-[13px]">Search filters</div>
+
+                    {/* Scope */}
+                    <div className="mb-3">
+                      <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">Scope</div>
+                      <div className="flex rounded-lg border border-[#dadce0] overflow-hidden">
+                        <button
+                          className={`flex-1 py-1.5 text-[12px] transition-colors ${filterScope === "current" ? "bg-[#d3e3fd] text-[#0b57d0] font-medium" : "hover:bg-[#f1f3f4]"}`}
+                          onClick={() => setFilterScope("current")}
+                          data-testid="filter-scope-current"
+                        >
+                          {activeLabel ? "Current label" : activeAccount ? "Current account" : `Current folder`}
+                        </button>
+                        <button
+                          className={`flex-1 py-1.5 text-[12px] transition-colors ${filterScope === "all" ? "bg-[#d3e3fd] text-[#0b57d0] font-medium" : "hover:bg-[#f1f3f4]"}`}
+                          onClick={() => setFilterScope("all")}
+                          data-testid="filter-scope-all"
+                        >
+                          All mail
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Date range */}
+                    <div className="mb-3">
+                      <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">Date range</div>
+                      <select
+                        className="w-full border border-[#dadce0] rounded-lg px-3 py-1.5 text-[12px] bg-white focus:outline-none focus:border-[#0b57d0]"
+                        value={filterDateRange}
+                        onChange={e => setFilterDateRange(e.target.value)}
+                        data-testid="filter-date-range"
+                      >
+                        <option value="">All time</option>
+                        <option value="7d">Last 7 days</option>
+                        <option value="30d">Last 30 days</option>
+                        <option value="90d">Last 3 months</option>
+                        <option value="1y">Last year</option>
+                      </select>
+                    </div>
+
+                    {/* Toggles */}
+                    <div className="space-y-2 mb-3">
+                      <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">Show only</div>
+                      {[
+                        { label: "Has attachment", value: filterHasAttachment, setter: setFilterHasAttachment, testId: "filter-has-attachment" },
+                        { label: "Unread only", value: filterUnread, setter: setFilterUnread, testId: "filter-unread" },
+                        { label: "Starred only", value: filterStarred, setter: setFilterStarred, testId: "filter-starred" },
+                        { label: "Search in email body", value: filterSearchBody, setter: setFilterSearchBody, testId: "filter-search-body" },
+                      ].map(({ label, value, setter, testId }) => (
+                        <label key={testId} className="flex items-center gap-2.5 cursor-pointer group">
+                          <input
+                            type="checkbox"
+                            checked={value}
+                            onChange={e => setter(e.target.checked)}
+                            className="w-4 h-4 accent-[#0b57d0] cursor-pointer rounded"
+                            data-testid={testId}
+                          />
+                          <span className="text-[13px] group-hover:text-[#0b57d0] transition-colors">{label}</span>
+                        </label>
+                      ))}
+                    </div>
+
+                    {/* Operator hint */}
+                    <div className="border-t border-[#f0f0f0] pt-3 mt-1">
+                      <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">Search operators</div>
+                      <div className="text-[11px] text-[#80868b] space-y-0.5">
+                        <div><span className="font-mono bg-[#f1f3f4] px-1 rounded">from:alice</span> — filter by sender</div>
+                        <div><span className="font-mono bg-[#f1f3f4] px-1 rounded">subject:invoice</span> — match subject</div>
+                        <div><span className="font-mono bg-[#f1f3f4] px-1 rounded">has:attachment</span> — has files</div>
+                      </div>
+                    </div>
+
+                    {/* Clear button */}
+                    {activeFiltersCount > 0 && (
+                      <button
+                        className="mt-3 w-full text-center text-[12px] text-[#c5221f] hover:text-[#a50e0e] font-medium"
+                        onClick={() => { setFilterScope("current"); setFilterHasAttachment(false); setFilterUnread(false); setFilterStarred(false); setFilterDateRange(""); setFilterSearchBody(false); }}
+                        data-testid="filter-clear-all"
+                      >
+                        Clear all filters
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             )}
             <div className="flex-1" />
@@ -903,11 +1130,26 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                       {bulkPermanentDeleteMutation.isPending ? "Deleting..." : "Delete forever"}
                     </button>
                   )}
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Archive" data-testid="button-bulk-archive"
-                    disabled={isBulkBusy}
-                    onClick={() => bulkArchiveMutation.mutate(Array.from(selectedEmailIds))}>
-                    <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
-                  </Button>
+                  {activeFolder === "spam" ? (
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Not spam" data-testid="button-bulk-not-spam"
+                      disabled={isBulkBusy}
+                      onClick={() => bulkNotSpamMutation.mutate(Array.from(selectedEmailIds))}>
+                      <ShieldCheck className="h-[18px] w-[18px] text-[#5f6368]" />
+                    </Button>
+                  ) : (
+                    <>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Archive" data-testid="button-bulk-archive"
+                        disabled={isBulkBusy}
+                        onClick={() => bulkArchiveMutation.mutate(Array.from(selectedEmailIds))}>
+                        <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
+                      </Button>
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Mark as spam" data-testid="button-bulk-spam"
+                        disabled={isBulkBusy}
+                        onClick={() => bulkMarkAsSpamMutation.mutate(Array.from(selectedEmailIds))}>
+                        <AlertCircle className="h-[18px] w-[18px] text-[#5f6368]" />
+                      </Button>
+                    </>
+                  )}
                   <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Delete" data-testid="button-bulk-delete"
                     disabled={isBulkBusy}
                     onClick={() => bulkDeleteMutation.mutate(Array.from(selectedEmailIds))}>
@@ -993,6 +1235,23 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         {/* Email List OR Thread View OR Email View */}
         {!selectedEmail && !selectedThreadEmails ? (
           <div className="flex-1 flex flex-col min-h-0">
+            {isFiltering && !emailsQuery.isLoading && (
+              <div className="flex items-center gap-2 px-4 py-1.5 bg-[#f6f8fc] border-b border-[#e0e0e0] text-[12px] text-[#5f6368]" data-testid="search-result-count">
+                <Search className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>
+                  <span className="font-medium text-[#202124]">{allEmails.length}</span> result{allEmails.length !== 1 ? "s" : ""}
+                  {searchQuery && <span> for &ldquo;<span className="font-medium text-[#202124]">{searchQuery}</span>&rdquo;</span>}
+                  {filterScope === "current" && <span className="ml-1 text-[#80868b]">· {activeLabel ? "Current label" : activeAccount ? "Current account" : activeFolder.charAt(0).toUpperCase() + activeFolder.slice(1)}</span>}
+                  {filterScope === "all" && <span className="ml-1 text-[#80868b]">· All mail</span>}
+                </span>
+              </div>
+            )}
+            {activeFolder === "spam" && (
+              <div className="flex items-center gap-2 px-4 py-2 bg-[#fef7e0] border-b border-[#f5d565] text-[12px] text-[#7a5c00]" data-testid="spam-banner">
+                <AlertCircle className="h-3.5 w-3.5 flex-shrink-0 text-[#b06000]" />
+                <span>Spam is automatically emptied after <strong>{settings?.spamRetentionDays || 30} days</strong>. Messages in here will not appear in search results.</span>
+              </div>
+            )}
             <EmailList
               emails={emails}
               isLoading={emailsQuery.isLoading}
@@ -1006,12 +1265,17 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
               clockFormat={settings?.clockFormat || "12h"}
               conversationView={settings?.conversationView !== false}
               customFolders={customFolders}
+              activeFolder={activeFolder}
               onArchive={(id) => { archiveMutation.mutate(id); }}
               onDelete={(id) => { deleteMutation.mutate(id); }}
               onMarkRead={(id, isUnread) => readMutation.mutate({ id, isUnread })}
               onMoveToFolder={(id, folder) => bulkMoveMutation.mutate({ ids: [id], folder })}
               onAddLabel={(emailId, labelId) => addLabelMutation.mutate({ emailId, labelId })}
+              onMarkAsSpam={(id) => markAsSpamMutation.mutate(id)}
+              onNotSpam={(id) => notSpamMutation.mutate(id)}
+              onBlockSender={(id, email, name) => blockSenderMutation.mutate({ emailId: id, senderEmail: email, senderName: name })}
               onSelectThread={handleSelectThread}
+              searchQuery={searchQuery}
             />
           </div>
         ) : selectedThreadEmails ? (
@@ -1032,6 +1296,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
             email={selectedEmail!}
             labels={labels}
             showLabels={settings?.showLabels !== false}
+            activeFolder={activeFolder}
             onBack={handleBack}
             onArchive={() => archiveMutation.mutate(selectedEmail!.id)}
             onDelete={() => deleteMutation.mutate(selectedEmail!.id)}
@@ -1039,6 +1304,11 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
             onToggleRead={() => readMutation.mutate({ id: selectedEmail!.id, isUnread: !selectedEmail!.isUnread })}
             onAddLabel={(labelId) => addLabelMutation.mutate({ emailId: selectedEmail!.id, labelId })}
             onRemoveLabel={(labelId) => removeLabelMutation.mutate({ emailId: selectedEmail!.id, labelId })}
+            onMarkAsSpam={() => markAsSpamMutation.mutate(selectedEmail!.id)}
+            onNotSpam={() => notSpamMutation.mutate(selectedEmail!.id)}
+            onBlockSender={() => blockSenderMutation.mutate({ emailId: selectedEmail!.id, senderEmail: selectedEmail!.sender.email, senderName: selectedEmail!.sender.name })}
+            onUnsubscribe={() => unsubscribeMutation.mutate(selectedEmail!.id)}
+            isUnsubscribing={unsubscribeMutation.isPending}
             onReply={handleReply}
             onReplyAll={handleReplyAll}
             onForward={handleForward}
@@ -1061,6 +1331,20 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   );
 }
 
+function HighlightText({ text, query }: { text: string; query: string }) {
+  if (!query || !query.trim()) return <>{text}</>;
+  const q = query.trim().toLowerCase();
+  const idx = text.toLowerCase().indexOf(q);
+  if (idx === -1) return <>{text}</>;
+  return (
+    <>
+      {text.slice(0, idx)}
+      <mark className="bg-[#fff2a8] text-inherit rounded-sm px-0 font-semibold">{text.slice(idx, idx + q.length)}</mark>
+      <HighlightText text={text.slice(idx + q.length)} query={query} />
+    </>
+  );
+}
+
 function EmailList({
   emails,
   isLoading,
@@ -1074,12 +1358,17 @@ function EmailList({
   clockFormat,
   conversationView,
   customFolders,
+  activeFolder,
   onArchive,
   onDelete,
   onMarkRead,
   onMoveToFolder,
   onAddLabel,
+  onMarkAsSpam,
+  onNotSpam,
+  onBlockSender,
   onSelectThread,
+  searchQuery = "",
 }: {
   emails: Email[];
   isLoading: boolean;
@@ -1093,12 +1382,17 @@ function EmailList({
   clockFormat: "12h" | "24h";
   conversationView: boolean;
   customFolders: CustomFolder[];
+  activeFolder: string;
   onArchive: (id: string) => void;
   onDelete: (id: string) => void;
   onMarkRead: (id: string, isUnread: boolean) => void;
   onMoveToFolder: (id: string, folder: string) => void;
   onAddLabel: (emailId: string, labelId: string) => void;
+  onMarkAsSpam: (id: string) => void;
+  onNotSpam: (id: string) => void;
+  onBlockSender: (id: string, senderEmail: string, senderName: string) => void;
   onSelectThread: (emails: Email[]) => void;
+  searchQuery?: string;
 }) {
   const getLabelById = (id: string) => labels.find(l => l.id === id);
   const rowHeight = displayDensity === "compact" ? "h-8" : displayDensity === "comfortable" ? "h-12" : "h-10";
@@ -1219,7 +1513,7 @@ function EmailList({
 
               {/* Sender(s) */}
               <div className={`w-[100px] lg:w-[140px] xl:w-[200px] flex-shrink-0 truncate text-[13px] pl-2 ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
-                {senderDisplay}
+                <HighlightText text={senderDisplay} query={searchQuery} />
                 {conversationView && count > 1 && (
                   <span className="ml-1 text-[11px] text-[#5f6368] font-normal">({count})</span>
                 )}
@@ -1243,7 +1537,7 @@ function EmailList({
                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={latestEmail.sendError} data-testid={`status-failed-${latestEmail.id}`}>Send failed</span>
                 )}
                 <span className={`truncate text-[13px] ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
-                  {latestEmail.subject}
+                  <HighlightText text={latestEmail.subject || ""} query={searchQuery} />
                 </span>
                 {showLabels && latestEmail.labels && latestEmail.labels.length > 0 && latestEmail.labels.map(lId => {
                   const lbl = getLabelById(lId);
@@ -1289,9 +1583,20 @@ function EmailList({
             <MailOpen className="h-4 w-4 flex-shrink-0" />{ctxMenu.email.isUnread ? "Mark as read" : "Mark as unread"}
           </button>
           <div className="border-t border-[#f0f0f0] my-1" />
-          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onArchive(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-archive">
-            <Archive className="h-4 w-4 flex-shrink-0" />Archive
-          </button>
+          {activeFolder === "spam" ? (
+            <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onNotSpam(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-not-spam">
+              <ShieldCheck className="h-4 w-4 flex-shrink-0" />Not spam
+            </button>
+          ) : (
+            <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onArchive(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-archive">
+              <Archive className="h-4 w-4 flex-shrink-0" />Archive
+            </button>
+          )}
+          {activeFolder !== "spam" && (
+            <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onMarkAsSpam(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-spam">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />Mark as spam
+            </button>
+          )}
           <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5" onClick={() => { onDelete(ctxMenu.email.id); setCtxMenu(null); }} data-testid="ctx-delete">
             <Trash2 className="h-4 w-4 flex-shrink-0" />Move to Trash
           </button>
@@ -1329,6 +1634,10 @@ function EmailList({
               )}
             </div>
           )}
+          <div className="border-t border-[#f0f0f0] my-1" />
+          <button className="w-full text-left px-4 py-2 hover:bg-[#f1f3f4] flex items-center gap-2.5 text-[#c5221f]" onClick={() => { onBlockSender(ctxMenu.email.id, ctxMenu.email.sender.email, ctxMenu.email.sender.name); setCtxMenu(null); }} data-testid="ctx-block-sender">
+            <Ban className="h-4 w-4 flex-shrink-0" />Block sender
+          </button>
         </div>
       )}
     </div>
@@ -1720,6 +2029,7 @@ function EmailView({
   email,
   labels,
   showLabels,
+  activeFolder,
   onBack,
   onArchive,
   onDelete,
@@ -1727,6 +2037,11 @@ function EmailView({
   onToggleRead,
   onAddLabel,
   onRemoveLabel,
+  onMarkAsSpam,
+  onNotSpam,
+  onBlockSender,
+  onUnsubscribe,
+  isUnsubscribing,
   onReply,
   onReplyAll,
   onForward,
@@ -1740,6 +2055,7 @@ function EmailView({
   email: Email;
   labels: EmailLabel[];
   showLabels: boolean;
+  activeFolder: string;
   onBack: () => void;
   onArchive: () => void;
   onDelete: () => void;
@@ -1747,6 +2063,11 @@ function EmailView({
   onToggleRead: () => void;
   onAddLabel: (labelId: string) => void;
   onRemoveLabel: (labelId: string) => void;
+  onMarkAsSpam: () => void;
+  onNotSpam: () => void;
+  onBlockSender: () => void;
+  onUnsubscribe: () => void;
+  isUnsubscribing: boolean;
   onReply: () => void;
   onReplyAll: () => void;
   onForward: () => void;
@@ -1896,9 +2217,15 @@ function EmailView({
     <div className="flex-1 flex flex-col overflow-hidden" data-testid="email-view">
       {/* Toolbar */}
       <div className="h-12 flex items-center px-2 gap-1 border-b border-[#e0e0e0] no-print">
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onArchive} title="Archive" data-testid="button-archive">
-          <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
-        </Button>
+        {activeFolder === "spam" ? (
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onNotSpam} title="Not spam" data-testid="button-not-spam">
+            <ShieldCheck className="h-[18px] w-[18px] text-[#5f6368]" />
+          </Button>
+        ) : (
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onArchive} title="Archive" data-testid="button-archive">
+            <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
+          </Button>
+        )}
         <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onDelete} title="Delete" data-testid="button-delete">
           <Trash2 className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
@@ -1951,13 +2278,30 @@ function EmailView({
                 {email.isStarred ? "Remove star" : "Add star"}
               </button>
               <div className="border-t border-[#e0e0e0] my-1" />
-              <button onClick={() => { onArchive(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-archive">
-                <Archive className="h-4 w-4" />
-                Archive
-              </button>
+              {activeFolder === "spam" ? (
+                <button onClick={() => { onNotSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-not-spam">
+                  <ShieldCheck className="h-4 w-4" />
+                  Not spam
+                </button>
+              ) : (
+                <>
+                  <button onClick={() => { onArchive(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-archive">
+                    <Archive className="h-4 w-4" />
+                    Archive
+                  </button>
+                  <button onClick={() => { onMarkAsSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-mark-spam">
+                    <AlertCircle className="h-4 w-4" />
+                    Mark as spam
+                  </button>
+                </>
+              )}
               <button onClick={() => { onDelete(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-delete">
                 <Trash2 className="h-4 w-4" />
                 Delete
+              </button>
+              <button onClick={() => { onBlockSender(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#c5221f] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-block-sender">
+                <Ban className="h-4 w-4" />
+                Block sender
               </button>
               <div className="border-t border-[#e0e0e0] my-1" />
               <button onClick={() => { window.print(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-print">
@@ -2078,6 +2422,16 @@ function EmailView({
                 <div className="flex items-center gap-2 flex-wrap">
                   <span className="text-sm font-medium text-[#202124]">{fullEmail.sender.name}</span>
                   <span className="text-xs text-[#5f6368] truncate">&lt;{fullEmail.sender.email}&gt;</span>
+                  {(fullEmail.listUnsubscribeUrl || fullEmail.listUnsubscribeMail) && (
+                    <button
+                      onClick={onUnsubscribe}
+                      disabled={isUnsubscribing}
+                      className="text-xs text-[#c5221f] hover:underline disabled:opacity-50 flex-shrink-0"
+                      data-testid="button-unsubscribe"
+                    >
+                      {isUnsubscribing ? "Unsubscribing..." : "Unsubscribe"}
+                    </button>
+                  )}
                 </div>
                 <div className="text-xs text-[#5f6368] truncate">
                   to {fullEmail.accountEmail || fullEmail.to.map(t => t.name || t.email).join(", ")}
@@ -4371,6 +4725,35 @@ function GeneralSettingsPanel() {
           </div>
           <p className="text-xs text-[#5f6368]">
             Emails in Trash will be automatically and permanently deleted after {s.trashRetentionDays || 30} days.
+          </p>
+        </div>
+      </div>
+
+      <Separator />
+
+      <div className="space-y-4">
+        <h4 className="text-sm font-medium text-[#202124]">Spam</h4>
+
+        <div className="space-y-2">
+          <Label className="text-xs text-[#5f6368]">Auto-empty spam after</Label>
+          <div className="flex gap-2">
+            {[7, 30, 60, 90].map(days => (
+              <button
+                key={days}
+                onClick={() => update({ spamRetentionDays: days })}
+                className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
+                  (s.spamRetentionDays || 30) === days
+                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
+                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
+                }`}
+                data-testid={`button-spam-${days}`}
+              >
+                {days} days
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-[#5f6368]">
+            Emails in Spam will be automatically and permanently deleted after {s.spamRetentionDays || 30} days.
           </p>
         </div>
       </div>
