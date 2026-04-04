@@ -2,7 +2,9 @@
 
 [![Docker Hub](https://img.shields.io/docker/pulls/jahuuk/localmail-app?logo=docker&label=Docker%20Hub)](https://hub.docker.com/r/jahuuk/localmail-app)
 
-A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface, without relying on any third-party cloud service. Your data never leaves your machine.
+A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface. Your data never leaves your machine. 
+
+I made this app in response to Gmail removing POP3 functionality as I had a lot of email accounts amalgamated into a simple/single view. I knew I'd miss it. So I wanted to create the functionality into an app I can use in my homelab. This works with both IMAP (the better protocol) and POP3 and amalgamates your emails into a singular view.
 
 ![LoginScreenshot](readmescreenshots/image1.png)
 
