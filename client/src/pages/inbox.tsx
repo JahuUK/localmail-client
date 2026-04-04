@@ -1668,10 +1668,11 @@ function ThreadEmailCard({
     enabled: expanded,
   });
   const fullEmail = fullEmailQuery.data || email;
+  const bodyHtmlContent = fullEmail.bodyHtml || (/<[a-z][\s\S]*>/i.test(fullEmail.body) ? fullEmail.body : "");
 
   const sanitizedHtml = useMemo(() => {
-    if (!expanded || !fullEmail.bodyHtml) return "";
-    let html = fullEmail.bodyHtml;
+    if (!expanded || !bodyHtmlContent) return "";
+    let html = bodyHtmlContent;
     if (fullEmail.attachments) {
       for (const att of fullEmail.attachments) {
         if (att.cid) {
@@ -1697,7 +1698,7 @@ function ThreadEmailCard({
     });
     DOMPurify.removeHook('afterSanitizeAttributes');
     return result;
-  }, [expanded, fullEmail.bodyHtml, fullEmail.attachments, email.id]);
+  }, [expanded, bodyHtmlContent, fullEmail.attachments, email.id]);
 
   const toLine = email.to?.map(t => t.name || t.email).join(", ") || "";
 
@@ -1745,7 +1746,7 @@ function ThreadEmailCard({
             </div>
           ) : (
             <div className="px-6 py-4">
-              {fullEmail.bodyHtml ? (
+              {bodyHtmlContent ? (
                 <div className="email-html-body overflow-x-auto" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
               ) : (
                 <pre className="text-sm text-[#3c4043] dark:text-[#bdc1c6] whitespace-pre-wrap font-sans leading-relaxed">{fullEmail.body}</pre>
@@ -2099,11 +2100,12 @@ function EmailView({
   });
 
   const fullEmail = fullEmailQuery.data || email;
-  const hasHtml = !!fullEmail.bodyHtml;
+  const bodyHtmlContent = fullEmail.bodyHtml || (/<[a-z][\s\S]*>/i.test(fullEmail.body) ? fullEmail.body : "");
+  const hasHtml = !!bodyHtmlContent;
 
   const sanitizedHtml = useMemo(() => {
-    if (!fullEmail.bodyHtml) return "";
-    let html = fullEmail.bodyHtml;
+    if (!bodyHtmlContent) return "";
+    let html = bodyHtmlContent;
     if (fullEmail.attachments) {
       for (const att of fullEmail.attachments) {
         if (att.cid) {
@@ -2129,7 +2131,7 @@ function EmailView({
     });
     DOMPurify.removeHook('afterSanitizeAttributes');
     return result;
-  }, [fullEmail.bodyHtml, fullEmail.attachments, email.id]);
+  }, [bodyHtmlContent, fullEmail.attachments, email.id]);
 
   const accountsQuery = useQuery<Pop3Account[]>({ queryKey: ["/api/accounts"] });
   const accounts = accountsQuery.data || [];
@@ -2804,6 +2806,7 @@ function InlineReplyComposer({
           suppressContentEditableWarning
           onInput={syncBody}
           onPaste={handlePaste}
+          onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="px-4 text-sm outline-none py-3 min-h-[120px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-inline-body"
@@ -3488,6 +3491,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           suppressContentEditableWarning
           onInput={syncBody}
           onPaste={handlePaste}
+          onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="flex-1 px-3 text-sm outline-none py-2 overflow-y-auto min-h-[80px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-compose-body"

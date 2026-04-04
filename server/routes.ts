@@ -594,14 +594,16 @@ export async function registerRoutes(
     const ccRecipients = cc ? cc.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ name: e, email: e })) : [];
     const bccRecipients = bcc ? bcc.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ name: e, email: e })) : [];
 
+    const isHtmlBody = /<[a-z][\s\S]*>/i.test(body);
     const email = await storage.createEmail({
       sender: { name: senderName, email: senderEmail },
       to: toRecipients,
       cc: ccRecipients.length > 0 ? ccRecipients : undefined,
       bcc: bccRecipients.length > 0 ? bccRecipients : undefined,
       subject,
-      snippet: body.substring(0, 120),
+      snippet: (isHtmlBody ? body.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim() : body).substring(0, 120),
       body,
+      bodyHtml: isHtmlBody ? body : undefined,
       date: new Date().toISOString(),
       isUnread: false,
       isStarred: false,
