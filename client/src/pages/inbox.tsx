@@ -73,6 +73,9 @@ import {
   ChevronUp,
   ShieldCheck,
   Ban,
+  Bell,
+  BellOff,
+  Palmtree,
 } from "lucide-react";
 import { format, isToday, isThisYear } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -85,6 +88,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Switch } from "@/components/ui/switch";
 import { useToast } from "@/hooks/use-toast";
 import brandIcon from "@/assets/localmail.png";
 
@@ -124,7 +128,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [selectedThreadEmails, setSelectedThreadEmails] = useState<Email[] | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
-  const [composeDefaults, setComposeDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string} | null>(null);
+  const [composeDefaults, setComposeDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [labelsExpanded, setLabelsExpanded] = useState(true);
   const [accountsExpanded, setAccountsExpanded] = useState(true);
@@ -175,7 +179,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
 
   const emailsQuery = useQuery<Email[]>({
     queryKey: [queryKey],
-    refetchInterval: (settings?.autoRefresh !== false) ? ((settings?.refreshInterval || 30) * 1000) : false,
+    refetchInterval: 30_000,
   });
 
   const labelsQuery = useQuery<EmailLabel[]>({
@@ -198,7 +202,50 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     }
   }, [settings?.darkMode]);
 
+  // Track inbox unread count for document title
   const allEmails = emailsQuery.data || [];
+  const inboxUnreadCount = allEmails.filter(e => e.isUnread && e.folder === "inbox").length;
+  useEffect(() => {
+    document.title = inboxUnreadCount > 0 ? `LocalMail (${inboxUnreadCount})` : "LocalMail";
+    return () => { document.title = "LocalMail"; };
+  }, [inboxUnreadCount]);
+
+  // Browser notification detection — fire when new emails arrive during auto-refresh
+  const prevEmailIdsRef = useRef<Set<string>>(new Set());
+  const notificationsInitializedRef = useRef(false);
+  useEffect(() => {
+    const emails = emailsQuery.data;
+    if (!emails) return;
+    const currentIds = new Set(emails.map(e => e.id));
+    if (!notificationsInitializedRef.current) {
+      prevEmailIdsRef.current = currentIds;
+      notificationsInitializedRef.current = true;
+      return;
+    }
+    if (settings?.notifyNewMail && "Notification" in window && Notification.permission === "granted") {
+      const newInboxEmails = emails.filter(
+        e => !prevEmailIdsRef.current.has(e.id) && e.folder === "inbox" && e.isUnread
+      );
+      if (newInboxEmails.length === 1) {
+        const e = newInboxEmails[0];
+        const n = new Notification(`New email from ${e.sender.name || e.sender.email}`, {
+          body: e.subject,
+          icon: "/favicon.ico",
+          tag: "localmail-new",
+        });
+        n.onclick = () => { window.focus(); };
+      } else if (newInboxEmails.length > 1) {
+        const n = new Notification(`${newInboxEmails.length} new messages`, {
+          body: newInboxEmails.map(e => e.subject).join(", "),
+          icon: "/favicon.ico",
+          tag: "localmail-new",
+        });
+        n.onclick = () => { window.focus(); };
+      }
+    }
+    prevEmailIdsRef.current = currentIds;
+  }, [emailsQuery.data]);
+
   const labels = labelsQuery.data || [];
   const accounts = accountsQuery.data || [];
   const customFolders = customFoldersQuery.data || [];
@@ -522,6 +569,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         body: (settings?.signature ? `<br><br>${settings.signature}` : "") + quotedBody,
         inReplyTo: selectedEmail.messageId,
         references: selectedEmail.messageId,
+        accountEmail: selectedEmail.accountEmail,
       });
       setComposeOpen(true);
     } catch {}
@@ -545,6 +593,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         body: (settings?.signature ? `<br><br>${settings.signature}` : "") + quotedBody,
         inReplyTo: selectedEmail.messageId,
         references: selectedEmail.messageId,
+        accountEmail: selectedEmail.accountEmail,
       });
       setComposeOpen(true);
     } catch {}
@@ -935,7 +984,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         <header className="flex flex-col">
           <div className="h-14 flex items-center px-2 gap-2">
             {selectedEmail && (
-              <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full" onClick={handleBack} title="Back to list" data-testid="button-back">
+              <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={handleBack} title="Back to list" data-testid="button-back">
                 <ArrowLeft className="h-5 w-5 text-[#444746]" />
               </Button>
             )}
@@ -1131,43 +1180,43 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                     </button>
                   )}
                   {activeFolder === "spam" ? (
-                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Not spam" data-testid="button-bulk-not-spam"
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Not spam" data-testid="button-bulk-not-spam"
                       disabled={isBulkBusy}
                       onClick={() => bulkNotSpamMutation.mutate(Array.from(selectedEmailIds))}>
                       <ShieldCheck className="h-[18px] w-[18px] text-[#5f6368]" />
                     </Button>
                   ) : (
                     <>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Archive" data-testid="button-bulk-archive"
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Archive" data-testid="button-bulk-archive"
                         disabled={isBulkBusy}
                         onClick={() => bulkArchiveMutation.mutate(Array.from(selectedEmailIds))}>
                         <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
                       </Button>
-                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Mark as spam" data-testid="button-bulk-spam"
+                      <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Mark as spam" data-testid="button-bulk-spam"
                         disabled={isBulkBusy}
                         onClick={() => bulkMarkAsSpamMutation.mutate(Array.from(selectedEmailIds))}>
                         <AlertCircle className="h-[18px] w-[18px] text-[#5f6368]" />
                       </Button>
                     </>
                   )}
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Delete" data-testid="button-bulk-delete"
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Delete" data-testid="button-bulk-delete"
                     disabled={isBulkBusy}
                     onClick={() => bulkDeleteMutation.mutate(Array.from(selectedEmailIds))}>
                     <Trash2 className="h-[18px] w-[18px] text-[#5f6368]" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Mark as read" data-testid="button-bulk-read"
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Mark as read" data-testid="button-bulk-read"
                     disabled={isBulkBusy}
                     onClick={() => bulkReadMutation.mutate({ ids: Array.from(selectedEmailIds), isUnread: false })}>
                     <MailOpen className="h-[18px] w-[18px] text-[#5f6368]" />
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Mark as unread" data-testid="button-bulk-unread"
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Mark as unread" data-testid="button-bulk-unread"
                     disabled={isBulkBusy}
                     onClick={() => bulkReadMutation.mutate({ ids: Array.from(selectedEmailIds), isUnread: true })}>
                     <Mail className="h-[18px] w-[18px] text-[#5f6368]" />
                   </Button>
                   <Separator orientation="vertical" className="h-5 mx-1" />
                   <div className="relative">
-                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Move to" data-testid="button-bulk-move"
+                    <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Move to" data-testid="button-bulk-move"
                       disabled={isBulkBusy}
                       onClick={(e) => { e.stopPropagation(); setMoveMenuOpen(!moveMenuOpen); }}>
                       <FolderInput className="h-[18px] w-[18px] text-[#5f6368]" />
@@ -1188,7 +1237,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                       </div>
                     )}
                   </div>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Add star" data-testid="button-bulk-star"
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Add star" data-testid="button-bulk-star"
                     disabled={isBulkBusy}
                     onClick={() => bulkStarMutation.mutate(Array.from(selectedEmailIds))}>
                     <Star className="h-[18px] w-[18px] text-[#5f6368]" />
@@ -1197,11 +1246,11 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                 </>
               ) : (
                 <>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="Refresh"
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Refresh"
                     onClick={() => queryClient.invalidateQueries()} data-testid="button-toolbar-refresh">
                     <RefreshCw className={`h-[18px] w-[18px] text-[#5f6368] ${emailsQuery.isFetching ? "animate-spin" : ""}`} />
                   </Button>
-                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" title="More" data-testid="button-toolbar-more">
+                  <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" title="More" data-testid="button-toolbar-more">
                     <MoreVertical className="h-[18px] w-[18px] text-[#5f6368]" />
                   </Button>
                 </>
@@ -1877,13 +1926,13 @@ function ThreadView({
         <h2 className="text-xl font-normal text-[#202124] dark:text-[#e8eaed] flex-1 truncate">{threadSubject}</h2>
         <span className="text-sm text-[#5f6368] flex-shrink-0">{emails.length} message{emails.length !== 1 ? "s" : ""}</span>
         <div className="flex items-center gap-1 ml-2">
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Archive all" onClick={() => { emails.forEach(e => onArchive(e.id)); onBack(); }} data-testid="thread-archive-all">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Archive all" onClick={() => { emails.forEach(e => onArchive(e.id)); onBack(); }} data-testid="thread-archive-all">
             <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Delete all" onClick={() => { emails.forEach(e => onDelete(e.id)); onBack(); }} data-testid="thread-delete-all">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Delete all" onClick={() => { emails.forEach(e => onDelete(e.id)); onBack(); }} data-testid="thread-delete-all">
             <Trash2 className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="Mark all as read" onClick={() => emails.filter(e => e.isUnread).forEach(e => onToggleRead(e.id, false))} data-testid="thread-mark-read-all">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" title="Mark all as read" onClick={() => emails.filter(e => e.isUnread).forEach(e => onToggleRead(e.id, false))} data-testid="thread-mark-read-all">
             <MailOpen className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
         </div>
@@ -2077,12 +2126,12 @@ function EmailView({
   signature: string;
   sendCancellation: number;
   defaultSendAccountId: string;
-  onPopOutCompose: (defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string}) => void;
+  onPopOutCompose: (defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string}) => void;
 }) {
   const [viewMode, setViewMode] = useState<"html" | "text">("html");
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [inlineReplyMode, setInlineReplyMode] = useState<"reply" | "replyAll" | "forward" | null>(null);
-  const [inlineReplyDefaults, setInlineReplyDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string} | null>(null);
+  const [inlineReplyDefaults, setInlineReplyDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} | null>(null);
   const [inlineReplyKey, setInlineReplyKey] = useState(0);
   const getLabelById = (id: string) => labels.find(l => l.id === id);
 
@@ -2162,7 +2211,7 @@ function EmailView({
     try {
       const res = await fetch(`/api/emails/${email.id}`, { credentials: "include" });
       const full = await res.json();
-      let defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string} = {};
+      let defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} = {};
 
       if (mode === "reply") {
         const quotedBody = buildQuotedBody(email, full.bodyHtml || full.body);
@@ -2173,6 +2222,7 @@ function EmailView({
           body: (signature ? `<br><br>${signature}` : "") + quotedBody,
           inReplyTo: email.messageId,
           references: email.messageId,
+          accountEmail: email.accountEmail,
         };
       } else if (mode === "replyAll") {
         const quotedBody = buildQuotedBody(email, full.bodyHtml || full.body);
@@ -2187,6 +2237,7 @@ function EmailView({
           body: (signature ? `<br><br>${signature}` : "") + quotedBody,
           inReplyTo: email.messageId,
           references: email.messageId,
+          accountEmail: email.accountEmail,
         };
       } else {
         const dateStr = escapeHtml(format(new Date(email.date), "EEE, MMM d, yyyy 'at' h:mm a"));
@@ -2204,7 +2255,7 @@ function EmailView({
     } catch {}
   };
 
-  const handlePopOut = (currentState: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string}) => {
+  const handlePopOut = (currentState: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string}) => {
     setInlineReplyMode(null);
     setInlineReplyDefaults(null);
     onPopOutCompose(currentState);
@@ -2220,18 +2271,18 @@ function EmailView({
       {/* Toolbar */}
       <div className="h-12 flex items-center px-2 gap-1 border-b border-[#e0e0e0] no-print">
         {activeFolder === "spam" ? (
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onNotSpam} title="Not spam" data-testid="button-not-spam">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onNotSpam} title="Not spam" data-testid="button-not-spam">
             <ShieldCheck className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
         ) : (
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onArchive} title="Archive" data-testid="button-archive">
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onArchive} title="Archive" data-testid="button-archive">
             <Archive className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
         )}
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onDelete} title="Delete" data-testid="button-delete">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onDelete} title="Delete" data-testid="button-delete">
           <Trash2 className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={onToggleRead} title={email.isUnread ? "Mark as read" : "Mark as unread"} data-testid="button-toggle-read">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onToggleRead} title={email.isUnread ? "Mark as read" : "Mark as unread"} data-testid="button-toggle-read">
           {email.isUnread ? <MailOpen className="h-[18px] w-[18px] text-[#5f6368]" /> : <Mail className="h-[18px] w-[18px] text-[#5f6368]" />}
         </Button>
         <Separator orientation="vertical" className="h-5 mx-1" />
@@ -2239,13 +2290,13 @@ function EmailView({
         <LabelPopover email={email} labels={labels} onAddLabel={onAddLabel} onRemoveLabel={onRemoveLabel} />
 
         <Separator orientation="vertical" className="h-5 mx-1" />
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={() => openInlineReply("reply")} title="Reply" data-testid="button-reply">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={() => openInlineReply("reply")} title="Reply" data-testid="button-reply">
           <Reply className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={() => openInlineReply("replyAll")} title="Reply all" data-testid="button-reply-all">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={() => openInlineReply("replyAll")} title="Reply all" data-testid="button-reply-all">
           <ReplyAll className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" onClick={() => openInlineReply("forward")} title="Forward" data-testid="button-forward">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={() => openInlineReply("forward")} title="Forward" data-testid="button-forward">
           <Forward className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
 
@@ -2265,61 +2316,72 @@ function EmailView({
         )}
 
         <div className="relative ml-auto">
-          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" title="More actions" data-testid="button-more-actions"
-            onClick={() => setMoreMenuOpen(!moreMenuOpen)}>
+          <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" title="More actions" data-testid="button-more-actions"
+            onClick={(e) => { e.stopPropagation(); setMoreMenuOpen(!moreMenuOpen); }}>
             <MoreVertical className="h-[18px] w-[18px] text-[#5f6368]" />
           </Button>
           {moreMenuOpen && (
-            <div className="absolute right-0 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-48 z-20" data-testid="more-actions-menu">
-              <button onClick={() => { onToggleRead(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-toggle-read">
-                {email.isUnread ? <MailOpen className="h-4 w-4" /> : <Mail className="h-4 w-4" />}
+            <div className="absolute right-0 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1.5 w-52 z-20" data-testid="more-actions-menu">
+              {/* Status */}
+              <div className="px-3 pt-0.5 pb-1">
+                <span className="text-[10px] font-semibold text-[#9aa0a6] uppercase tracking-wider">Status</span>
+              </div>
+              <button onClick={() => { onToggleRead(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-toggle-read">
+                {email.isUnread ? <MailOpen className="h-4 w-4 flex-shrink-0" /> : <Mail className="h-4 w-4 flex-shrink-0" />}
                 {email.isUnread ? "Mark as read" : "Mark as unread"}
               </button>
-              <button onClick={() => { onStar(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-toggle-star">
-                <Star className="h-4 w-4" />
+              <button onClick={() => { onStar(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-toggle-star">
+                <Star className="h-4 w-4 flex-shrink-0" />
                 {email.isStarred ? "Remove star" : "Add star"}
               </button>
+
+              {/* Organize */}
               <div className="border-t border-[#e0e0e0] my-1" />
+              <div className="px-3 pt-0.5 pb-1">
+                <span className="text-[10px] font-semibold text-[#9aa0a6] uppercase tracking-wider">Organize</span>
+              </div>
               {activeFolder === "spam" ? (
-                <button onClick={() => { onNotSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-not-spam">
-                  <ShieldCheck className="h-4 w-4" />
+                <button onClick={() => { onNotSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-not-spam">
+                  <ShieldCheck className="h-4 w-4 flex-shrink-0" />
                   Not spam
                 </button>
               ) : (
                 <>
-                  <button onClick={() => { onArchive(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-archive">
-                    <Archive className="h-4 w-4" />
+                  <button onClick={() => { onArchive(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-archive">
+                    <Archive className="h-4 w-4 flex-shrink-0" />
                     Archive
                   </button>
-                  <button onClick={() => { onMarkAsSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-mark-spam">
-                    <AlertCircle className="h-4 w-4" />
+                  <button onClick={() => { onMarkAsSpam(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-mark-spam">
+                    <AlertCircle className="h-4 w-4 flex-shrink-0" />
                     Mark as spam
                   </button>
                 </>
               )}
-              <button onClick={() => { onDelete(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-delete">
-                <Trash2 className="h-4 w-4" />
+              <button onClick={() => { onDelete(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-delete">
+                <Trash2 className="h-4 w-4 flex-shrink-0" />
                 Delete
               </button>
-              <button onClick={() => { onBlockSender(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#c5221f] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-block-sender">
-                <Ban className="h-4 w-4" />
+              <button onClick={() => { onBlockSender(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#c5221f] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-block-sender">
+                <Ban className="h-4 w-4 flex-shrink-0" />
                 Block sender
               </button>
+
+              {/* Export & Share */}
               <div className="border-t border-[#e0e0e0] my-1" />
-              <button onClick={() => { window.print(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-print">
-                <Printer className="h-4 w-4" />
-                Print
+              <div className="px-3 pt-0.5 pb-1">
+                <span className="text-[10px] font-semibold text-[#9aa0a6] uppercase tracking-wider">Export &amp; Share</span>
+              </div>
+              <button onClick={() => { onForwardAsAttachment(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-forward-attachment">
+                <Paperclip className="h-4 w-4 flex-shrink-0" />
+                Forward as attachment
               </button>
-              <button onClick={() => {
-                window.open(`/api/emails/${email.id}/eml`, "_blank");
-                setMoreMenuOpen(false);
-              }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-download-eml">
-                <Download className="h-4 w-4" />
+              <button onClick={() => { window.open(`/api/emails/${email.id}/eml`, "_blank"); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-download-eml">
+                <Download className="h-4 w-4 flex-shrink-0" />
                 Download as .eml
               </button>
-              <button onClick={() => { onForwardAsAttachment(); setMoreMenuOpen(false); }} className="w-full text-left px-4 py-2 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-forward-attachment">
-                <Paperclip className="h-4 w-4" />
-                Forward as attachment
+              <button onClick={() => { window.print(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-print">
+                <Printer className="h-4 w-4 flex-shrink-0" />
+                Print
               </button>
             </div>
           )}
@@ -2333,7 +2395,7 @@ function EmailView({
             <h1 className="text-[22px] font-normal text-[#202124] leading-7 flex-1 break-words">
               {fullEmail.subject}
             </h1>
-            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full flex-shrink-0" onClick={onStar} title={email.isStarred ? "Remove star" : "Add star"}>
+            <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full flex-shrink-0 hover:bg-[#f1f3f4] transition-colors" onClick={onStar} title={email.isStarred ? "Remove star" : "Add star"}>
               <Star className={`h-5 w-5 ${email.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5]"}`} />
             </Button>
           </div>
@@ -2413,6 +2475,21 @@ function EmailView({
               })}
             </div>
           )}
+
+          {/* Print-only email header — hidden in screen view, visible when printing */}
+          <div className="print-email-header" style={{ display: "none" }}>
+            <h1>{fullEmail.subject}</h1>
+            <table>
+              <tbody>
+                <tr><td>From:</td><td>{fullEmail.sender.name} &lt;{fullEmail.sender.email}&gt;</td></tr>
+                <tr><td>To:</td><td>{fullEmail.to.map(t => `${t.name} <${t.email}>`).join(", ")}</td></tr>
+                {fullEmail.cc && fullEmail.cc.length > 0 && (
+                  <tr><td>Cc:</td><td>{fullEmail.cc.map(t => `${t.name} <${t.email}>`).join(", ")}</td></tr>
+                )}
+                <tr><td>Date:</td><td>{format(new Date(fullEmail.date), clockFormat === "24h" ? "PPpp" : "PPpp")}</td></tr>
+              </tbody>
+            </table>
+          </div>
 
           {/* Sender info */}
           <div className="flex items-start justify-between gap-2 mb-6">
@@ -2505,13 +2582,13 @@ function InlineReplyComposer({
   onPopOut,
 }: {
   mode: "reply" | "replyAll" | "forward";
-  defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string};
+  defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string};
   email: Email;
   smtpAccounts: Pop3Account[];
   defaultSendAccountId: string;
   sendCancellation: number;
   onClose: () => void;
-  onPopOut: (state: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string}) => void;
+  onPopOut: (state: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string}) => void;
 }) {
   const [to, setTo] = useState(defaults.to || "");
   const [cc, setCc] = useState(defaults.cc || "");
@@ -2535,8 +2612,13 @@ function InlineReplyComposer({
 
   useEffect(() => {
     if (smtpAccounts.length > 0) {
-      const defaultExists = smtpAccounts.some(a => a.id === defaultSendAccountId);
-      setSelectedAccountId(defaultExists ? defaultSendAccountId : "");
+      if (defaultSendAccountId === "__smart__" && defaults.accountEmail) {
+        const match = smtpAccounts.find(a => a.email.toLowerCase() === defaults.accountEmail!.toLowerCase());
+        setSelectedAccountId(match?.id || "");
+      } else {
+        const defaultExists = smtpAccounts.some(a => a.id === defaultSendAccountId);
+        setSelectedAccountId(defaultExists ? defaultSendAccountId : "");
+      }
     }
   }, [smtpAccounts, defaultSendAccountId]);
 
@@ -2676,6 +2758,7 @@ function InlineReplyComposer({
     to, cc, subject, body,
     inReplyTo: defaults.inReplyTo,
     references: defaults.references,
+    accountEmail: defaults.accountEmail,
   });
 
   const modeLabel = mode === "reply" ? "Reply" : mode === "replyAll" ? "Reply All" : "Forward";
@@ -2908,7 +2991,7 @@ function InlineReplyComposer({
           <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileAttach} />
         </div>
 
-        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full" onClick={onClose} data-testid="button-inline-discard">
+        <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onClose} data-testid="button-inline-discard">
           <Trash2 className="h-4 w-4 text-[#5f6368]" />
         </Button>
       </div>
@@ -2932,7 +3015,7 @@ function LabelPopover({
   return (
     <Popover>
       <PopoverTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full" data-testid="button-label">
+        <Button variant="ghost" size="icon" className="h-9 w-9 rounded-full hover:bg-[#f1f3f4] transition-colors" data-testid="button-label">
           <Tag className="h-[18px] w-[18px] text-[#5f6368]" />
         </Button>
       </PopoverTrigger>
@@ -3024,7 +3107,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   signature: string;
   sendCancellation: number;
   defaultSendAccountId: string;
-  defaults?: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string} | null;
+  defaults?: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} | null;
 }) {
   const [to, setTo] = useState("");
   const [cc, setCc] = useState("");
@@ -3091,8 +3174,13 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
 
   useEffect(() => {
     if (open && !initialized && smtpAccounts.length > 0) {
-      const defaultExists = smtpAccounts.some(a => a.id === defaultSendAccountId);
-      setSelectedAccountId(defaultExists ? defaultSendAccountId : "");
+      if (defaultSendAccountId === "__smart__" && defaults?.accountEmail) {
+        const match = smtpAccounts.find(a => a.email.toLowerCase() === defaults.accountEmail!.toLowerCase());
+        setSelectedAccountId(match?.id || "");
+      } else {
+        const defaultExists = smtpAccounts.some(a => a.id === defaultSendAccountId);
+        setSelectedAccountId(defaultExists ? defaultSendAccountId : "");
+      }
       setInitialized(true);
     }
     if (!open) {
@@ -3825,52 +3913,96 @@ function LogsPanel() {
 }
 
 function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const [activeTab, setActiveTab] = useState<"general" | "labels" | "folders" | "rules" | "accounts" | "backup" | "logs">("general");
+  const [activeTab, setActiveTab] = useState<
+    "appearance" | "notifications" | "vacation" | "composing" |
+    "accounts" | "rules" | "labels" | "folders" |
+    "storage" | "backup" | "logs"
+  >("appearance");
 
-  const TABS = [
-    { id: "general" as const, label: "General", icon: Settings },
-    { id: "labels" as const, label: "Labels", icon: Tag },
-    { id: "folders" as const, label: "Folders", icon: Folder },
-    { id: "rules" as const, label: "Rules", icon: Shield },
-    { id: "accounts" as const, label: "Accounts", icon: Mail },
-    { id: "backup" as const, label: "Backup", icon: HardDrive },
-    { id: "logs" as const, label: "Logs", icon: Code },
+  const GROUPS = [
+    {
+      label: "Preferences",
+      items: [
+        { id: "appearance" as const, label: "Appearance", icon: Sun },
+        { id: "notifications" as const, label: "Notifications", icon: Bell },
+        { id: "vacation" as const, label: "Vacation Reply", icon: Palmtree },
+      ],
+    },
+    {
+      label: "Email",
+      items: [
+        { id: "composing" as const, label: "Composing", icon: Pencil },
+        { id: "accounts" as const, label: "Accounts", icon: Mail },
+        { id: "rules" as const, label: "Rules", icon: Shield },
+      ],
+    },
+    {
+      label: "Organisation",
+      items: [
+        { id: "labels" as const, label: "Labels", icon: Tag },
+        { id: "folders" as const, label: "Folders", icon: Folder },
+      ],
+    },
+    {
+      label: "System",
+      items: [
+        { id: "storage" as const, label: "Storage", icon: Trash2 },
+        { id: "backup" as const, label: "Backup", icon: HardDrive },
+        { id: "logs" as const, label: "Logs", icon: Code },
+      ],
+    },
   ];
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[700px] h-[85vh] p-0 gap-0 overflow-hidden" aria-describedby="settings-desc">
-        <span id="settings-desc" className="sr-only">Configure mail accounts, general preferences, and labels</span>
+      <DialogContent className="sm:max-w-[1060px] h-[90vh] p-0 gap-0 overflow-hidden" aria-describedby={undefined}>
+        <DialogTitle className="sr-only">Settings</DialogTitle>
         <div className="flex h-full overflow-hidden">
-          {/* Settings sidebar */}
-          <div className="w-[180px] border-r border-[#e0e0e0] bg-[#f6f8fc] flex flex-col py-4">
-            <h2 className="px-4 text-base font-medium text-[#202124] mb-4">Settings</h2>
-            {TABS.map(tab => (
-              <button
-                key={tab.id}
-                onClick={() => setActiveTab(tab.id)}
-                className={`flex items-center gap-3 px-4 py-2.5 text-sm transition-colors ${
-                  activeTab === tab.id
-                    ? "bg-[#d3e3fd] text-[#001d35] font-medium"
-                    : "text-[#444746] hover:bg-[#e8eaed]/60"
-                }`}
-                data-testid={`tab-settings-${tab.id}`}
-              >
-                <tab.icon className="w-4 h-4" />
-                {tab.label}
-              </button>
-            ))}
+          {/* Sidebar */}
+          <div className="w-[220px] border-r border-[#e0e0e0] bg-[#f6f8fc] flex flex-col overflow-y-auto flex-shrink-0">
+            <div className="px-5 py-4 flex items-center gap-2.5 border-b border-[#e0e0e0]">
+              <Settings className="h-5 w-5 text-[#1a73e8]" />
+              <span className="text-base font-semibold text-[#202124]">Settings</span>
+            </div>
+            <nav className="flex-1 py-2">
+              {GROUPS.map(group => (
+                <div key={group.label} className="mb-1">
+                  <div className="px-5 py-2 text-[10px] font-bold uppercase tracking-widest text-[#9aa0a6]">
+                    {group.label}
+                  </div>
+                  {group.items.map(item => (
+                    <button
+                      key={item.id}
+                      onClick={() => setActiveTab(item.id)}
+                      className={`w-full flex items-center gap-3 px-5 py-2.5 text-sm transition-colors text-left rounded-none ${
+                        activeTab === item.id
+                          ? "bg-[#d3e3fd] text-[#001d35] font-medium"
+                          : "text-[#444746] hover:bg-[#e8eaed]/70"
+                      }`}
+                      data-testid={`tab-settings-${item.id}`}
+                    >
+                      <item.icon className="w-4 h-4 flex-shrink-0" />
+                      {item.label}
+                    </button>
+                  ))}
+                </div>
+              ))}
+            </nav>
           </div>
 
-          {/* Settings content */}
-          <div className="flex-1 overflow-y-auto min-h-0">
-            {activeTab === "accounts" && <AccountsSettings />}
-            {activeTab === "general" && <GeneralSettingsPanel />}
-            {activeTab === "labels" && <LabelsSettings />}
-            {activeTab === "folders" && <FoldersSettings />}
-            {activeTab === "rules" && <RulesSettings />}
-            {activeTab === "backup" && <BackupSettings />}
-            {activeTab === "logs" && <LogsPanel />}
+          {/* Content area */}
+          <div className="flex-1 overflow-y-auto min-h-0 bg-white">
+            {activeTab === "appearance"    && <AppearancePanel />}
+            {activeTab === "notifications" && <NotificationsPanel />}
+            {activeTab === "vacation"      && <VacationPanel />}
+            {activeTab === "composing"     && <ComposingPanel />}
+            {activeTab === "accounts"      && <AccountsSettings />}
+            {activeTab === "rules"         && <RulesSettings />}
+            {activeTab === "labels"        && <LabelsSettings />}
+            {activeTab === "folders"       && <FoldersSettings />}
+            {activeTab === "storage"       && <StoragePanel />}
+            {activeTab === "backup"        && <BackupSettings />}
+            {activeTab === "logs"          && <LogsPanel />}
           </div>
         </div>
       </DialogContent>
@@ -4525,39 +4657,82 @@ function DefaultSendAccountSetting({ value, onChange }: { value: string; onChang
         className="w-full border border-[#dadce0] rounded-lg p-2.5 text-sm outline-none focus:border-[#0b57d0] bg-white"
         data-testid="select-default-send-account"
       >
-        <option value="">None (choose each time)</option>
+        <option value="__smart__">Smart match — reply from the account the email was received on</option>
+        <option value="">None — choose each time</option>
         {smtpAccounts.map(a => (
           <option key={a.id} value={a.id}>{a.name} ({a.email})</option>
         ))}
       </select>
-      <p className="text-xs text-[#5f6368]">This account will be pre-selected when composing new emails.</p>
+      <p className="text-xs text-[#5f6368]">
+        {value === "__smart__"
+          ? "When replying, LocalMail will automatically send from whichever of your accounts received the original email."
+          : value
+          ? "This account will be pre-selected when composing new emails."
+          : "You'll be prompted to choose an account each time you compose."}
+      </p>
     </div>
   );
 }
 
-function GeneralSettingsPanel() {
+// ─── Shared layout helpers ────────────────────────────────────────────────────
+
+function SettingRow({ label, description, children }: { label: string; description: string; children: React.ReactNode }) {
+  return (
+    <div className="flex items-center justify-between gap-6 py-0.5">
+      <div className="flex-1 min-w-0">
+        <div className="text-sm font-medium text-[#202124]">{label}</div>
+        <div className="text-xs text-[#5f6368] mt-0.5">{description}</div>
+      </div>
+      <div className="flex-shrink-0">{children}</div>
+    </div>
+  );
+}
+
+function SettingSection({ label, description, children }: { label: string; description?: string; children: React.ReactNode }) {
+  return (
+    <div className="space-y-3">
+      <div>
+        <div className="text-sm font-medium text-[#202124]">{label}</div>
+        {description && <div className="text-xs text-[#5f6368] mt-0.5">{description}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function PanelHeader({ title, subtitle, isPending }: { title: string; subtitle: string; isPending?: boolean }) {
+  return (
+    <div className="flex items-start justify-between pb-5 mb-6 border-b border-[#e0e0e0]">
+      <div>
+        <h3 className="text-lg font-semibold text-[#202124]">{title}</h3>
+        <p className="text-sm text-[#5f6368] mt-0.5">{subtitle}</p>
+      </div>
+      {isPending && (
+        <div className="flex items-center gap-1.5 text-xs text-[#5f6368] mt-1">
+          <Loader2 className="h-3 w-3 animate-spin" />
+          Saving…
+        </div>
+      )}
+    </div>
+  );
+}
+
+function useSettingsPanel() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingUpdatesRef = useRef<Partial<GeneralSettings>>({});
 
-  const settingsQuery = useQuery<GeneralSettings>({
-    queryKey: ["/api/settings"],
-  });
+  const settingsQuery = useQuery<GeneralSettings>({ queryKey: ["/api/settings"] });
 
   const updateMutation = useMutation({
     mutationFn: async (updates: Partial<GeneralSettings>) => {
       const res = await apiRequest("PUT", "/api/settings", updates);
       return res.json();
     },
-    onSuccess: (data: GeneralSettings) => {
-      queryClient.setQueryData(["/api/settings"], data);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to save setting", description: err.message, variant: "destructive" });
-    },
+    onSuccess: (data: GeneralSettings) => queryClient.setQueryData(["/api/settings"], data),
+    onError: (err: Error) => toast({ title: "Failed to save setting", description: err.message, variant: "destructive" }),
   });
-
-  const pendingUpdatesRef = useRef<Partial<GeneralSettings>>({});
 
   const update = useCallback((updates: Partial<GeneralSettings>) => {
     queryClient.setQueryData(["/api/settings"], (old: GeneralSettings | undefined) => old ? { ...old, ...updates } : old);
@@ -4570,206 +4745,301 @@ function GeneralSettingsPanel() {
     }, 300);
   }, [queryClient, updateMutation]);
 
-  const s = settingsQuery.data;
+  return { s: settingsQuery.data, update, isPending: updateMutation.isPending };
+}
 
-  if (!s) {
-    return <div className="p-6 text-sm text-[#5f6368]">Loading settings...</div>;
-  }
+const PILL = (active: boolean) =>
+  `px-5 py-2 text-sm rounded-full border transition-all font-medium ${
+    active ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]" : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
+  }`;
 
+const TOGGLE = (active: boolean) =>
+  `w-11 h-6 rounded-full transition-colors relative flex-shrink-0 ${active ? "bg-[#0b57d0]" : "bg-[#dadce0]"}`;
+
+// ─── Appearance panel ─────────────────────────────────────────────────────────
+
+function AppearancePanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
 
   return (
-    <div className="p-6 space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h3 className="text-base font-medium text-[#202124] mb-1">General Settings</h3>
-          <p className="text-xs text-[#5f6368]">Customize your email experience. Changes save automatically.</p>
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Appearance" subtitle="Adjust how LocalMail looks and feels" isPending={isPending} />
+
+      <SettingRow label="Dark mode" description="Switch between light and dark colour themes">
+        <button onClick={() => update({ darkMode: !s.darkMode })} className={TOGGLE(!!s.darkMode)} data-testid="toggle-dark-mode">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.darkMode ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
+
+      <Separator />
+
+      <SettingSection label="Display density" description="Controls the vertical spacing between emails in the list view">
+        <div className="flex gap-3 flex-wrap">
+          {(["default", "comfortable", "compact"] as const).map(d => (
+            <button key={d} onClick={() => update({ displayDensity: d })} className={PILL(s.displayDensity === d)} data-testid={`button-density-${d}`}>
+              {d.charAt(0).toUpperCase() + d.slice(1)}
+            </button>
+          ))}
         </div>
-        {updateMutation.isPending && (
-          <div className="flex items-center gap-1.5 text-xs text-[#5f6368]">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            Saving...
+        <p className="text-xs text-[#9aa0a6]">
+          {s.displayDensity === "compact" ? "Compact: more emails fit on screen with tighter row height." :
+           s.displayDensity === "comfortable" ? "Comfortable: larger rows with extra whitespace for easier reading." :
+           "Default: balanced row height suitable for most screens."}
+        </p>
+      </SettingSection>
+
+      <Separator />
+
+      <SettingSection label="Time format" description="How timestamps appear throughout the app">
+        <div className="flex gap-3 flex-wrap">
+          {(["12h", "24h"] as const).map(cf => (
+            <button key={cf} onClick={() => update({ clockFormat: cf })} className={PILL((s.clockFormat || "12h") === cf)} data-testid={`button-clock-${cf}`}>
+              {cf === "12h" ? "12-hour  (1:30 PM)" : "24-hour  (13:30)"}
+            </button>
+          ))}
+        </div>
+      </SettingSection>
+
+      <Separator />
+
+      <SettingSection label="Emails per page" description="How many emails are shown before pagination kicks in">
+        <div className="flex gap-3 flex-wrap">
+          {([10, 20, 50, 100] as const).map(n => (
+            <button key={n} onClick={() => update({ emailsPerPage: n })} className={PILL((s.emailsPerPage || 20) === n)} data-testid={`button-perpage-${n}`}>
+              {n}
+            </button>
+          ))}
+        </div>
+      </SettingSection>
+
+      <Separator />
+
+      <SettingRow label="Conversation view" description="Group emails with the same subject into a single thread">
+        <button onClick={() => update({ conversationView: !s.conversationView })} className={TOGGLE(!!s.conversationView)} data-testid="toggle-conversation-view">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.conversationView ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
+
+      <SettingRow label="Show labels on emails" description="Display colour-coded label badges in the list and reading view">
+        <button onClick={() => update({ showLabels: !s.showLabels })} className={TOGGLE(!!s.showLabels)} data-testid="toggle-show-labels">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.showLabels ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
+    </div>
+  );
+}
+
+// ─── Notifications panel ──────────────────────────────────────────────────────
+
+function NotificationsPanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
+
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Notifications" subtitle="Control how and when LocalMail alerts you to new activity" isPending={isPending} />
+
+      <SettingSection label="Desktop notifications" description="Show a system pop-up when new emails arrive in your inbox">
+        <SettingRow label="New mail notifications" description="Receive a desktop alert each time a new message lands">
+          <Switch checked={!!s.notifyNewMail} onCheckedChange={(v) => update({ notifyNewMail: v })} data-testid="switch-notify-new-mail" />
+        </SettingRow>
+
+        {"Notification" in window && (
+          <div className={`flex items-center justify-between gap-4 p-4 rounded-xl border mt-2 ${
+            Notification.permission === "granted" ? "bg-green-50 border-green-200" :
+            Notification.permission === "denied"  ? "bg-red-50 border-red-200" :
+            "bg-amber-50 border-amber-200"
+          }`}>
+            <div className="flex items-center gap-3">
+              <div className={`w-9 h-9 rounded-full flex items-center justify-center ${
+                Notification.permission === "granted" ? "bg-green-100" : "bg-[#fce8e6]"
+              }`}>
+                {Notification.permission === "granted"
+                  ? <Bell className="h-4 w-4 text-green-700" />
+                  : <BellOff className="h-4 w-4 text-[#c5221f]" />}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-[#202124]">
+                  Browser permission:{" "}
+                  <span className={Notification.permission === "granted" ? "text-green-700" : Notification.permission === "denied" ? "text-[#c5221f]" : "text-amber-700"}>
+                    {Notification.permission === "granted" ? "Allowed" : Notification.permission === "denied" ? "Blocked" : "Not yet asked"}
+                  </span>
+                </p>
+                <p className="text-xs text-[#5f6368] mt-0.5">
+                  {Notification.permission === "denied"
+                    ? "Open your browser's site settings to unblock notifications."
+                    : Notification.permission === "granted"
+                    ? "Notifications are ready — they fire when new emails arrive."
+                    : "Click Enable to grant permission for desktop alerts."}
+                </p>
+              </div>
+            </div>
+            {Notification.permission === "default" && (
+              <Button size="sm" onClick={() => Notification.requestPermission()} data-testid="button-request-notification-permission">
+                Enable
+              </Button>
+            )}
           </div>
         )}
-      </div>
+      </SettingSection>
+    </div>
+  );
+}
 
-      <div className="space-y-4">
-        <h4 className="text-sm font-medium text-[#202124] dark:text-[#e8eaed]">Display</h4>
+// ─── Vacation Reply panel ─────────────────────────────────────────────────────
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm text-[#202124] dark:text-[#e8eaed]">Dark mode</div>
-            <div className="text-xs text-[#5f6368] dark:text-[#9aa0a6]">Switch between light and dark themes</div>
+function VacationPanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
+
+  const inputCls = "w-full px-3 py-2.5 text-sm border border-[#dadce0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent bg-white";
+
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Vacation Reply" subtitle="Automatically send a reply when you receive emails while away" isPending={isPending} />
+
+      <SettingRow label="Enable vacation auto-reply" description="Sends a canned reply to every new sender while active">
+        <Switch checked={!!s.vacationReplyEnabled} onCheckedChange={(v) => update({ vacationReplyEnabled: v })} data-testid="switch-vacation-enabled" />
+      </SettingRow>
+
+      {s.vacationReplyEnabled && (
+        <div className="space-y-5 p-5 bg-[#f8f9fa] rounded-xl border border-[#e0e0e0]">
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#5f6368] uppercase tracking-wide">Reply subject</label>
+            <input
+              type="text"
+              value={s.vacationSubject || ""}
+              onChange={(e) => update({ vacationSubject: e.target.value })}
+              placeholder="Out of office"
+              className={inputCls}
+              data-testid="input-vacation-subject"
+            />
           </div>
-          <button
-            onClick={() => update({ darkMode: !s.darkMode })}
-            className={`w-10 h-6 rounded-full transition-colors relative ${s.darkMode ? "bg-[#0b57d0]" : "bg-[#dadce0]"}`}
-            data-testid="toggle-dark-mode"
-          >
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${s.darkMode ? "left-5" : "left-1"}`} />
-          </button>
-        </div>
 
-        <div className="space-y-2">
-          <Label className="text-xs text-[#5f6368]">Display density</Label>
-          <div className="flex gap-3">
-            {(["default", "comfortable", "compact"] as const).map(d => (
-              <button
-                key={d}
-                onClick={() => update({ displayDensity: d })}
-                className={`px-4 py-2 text-sm rounded-full border transition-colors capitalize ${
-                  s.displayDensity === d
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-density-${d}`}
-              >
-                {d}
-              </button>
-            ))}
+          <div className="space-y-1.5">
+            <label className="text-xs font-semibold text-[#5f6368] uppercase tracking-wide">Message body</label>
+            <textarea
+              value={s.vacationBody || ""}
+              onChange={(e) => update({ vacationBody: e.target.value })}
+              placeholder="I'm currently out of office and will reply when I return."
+              rows={4}
+              className={`${inputCls} resize-none`}
+              data-testid="textarea-vacation-body"
+            />
           </div>
-          <p className="text-xs text-[#5f6368]">
-            {s.displayDensity === "compact" ? "Compact: Fits more emails on screen with smaller rows." :
-             s.displayDensity === "comfortable" ? "Comfortable: Larger rows with more breathing room." :
-             "Default: Standard email row height."}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-[#5f6368] uppercase tracking-wide">Start date (optional)</label>
+              <input
+                type="date"
+                value={s.vacationStartDate ? s.vacationStartDate.split("T")[0] : ""}
+                onChange={(e) => update({ vacationStartDate: e.target.value ? new Date(e.target.value).toISOString() : "" })}
+                className={inputCls}
+                data-testid="input-vacation-start"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-xs font-semibold text-[#5f6368] uppercase tracking-wide">End date (optional)</label>
+              <input
+                type="date"
+                value={s.vacationEndDate ? s.vacationEndDate.split("T")[0] : ""}
+                onChange={(e) => update({ vacationEndDate: e.target.value ? new Date(e.target.value).toISOString() : "" })}
+                className={inputCls}
+                data-testid="input-vacation-end"
+              />
+            </div>
+          </div>
+
+          <p className="text-xs text-[#9aa0a6]">
+            If dates are set, replies only fire within that window. Each unique sender gets at most one auto-reply per server session.
           </p>
         </div>
+      )}
+    </div>
+  );
+}
 
-        <div className="space-y-2">
-          <Label className="text-xs text-[#5f6368]">Time format</Label>
-          <div className="flex gap-3">
-            {(["12h", "24h"] as const).map(cf => (
-              <button
-                key={cf}
-                onClick={() => update({ clockFormat: cf })}
-                className={`px-4 py-2 text-sm rounded-full border transition-colors ${
-                  (s.clockFormat || "12h") === cf
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-clock-${cf}`}
-              >
-                {cf === "12h" ? "12-hour (AM/PM)" : "24-hour"}
-              </button>
-            ))}
-          </div>
-        </div>
+// ─── Composing panel ──────────────────────────────────────────────────────────
 
-        <div className="space-y-2">
-          <Label className="text-xs text-[#5f6368]">Emails per page</Label>
-          <div className="flex gap-3">
-            {([10, 20, 50, 100] as const).map(n => (
-              <button
-                key={n}
-                onClick={() => update({ emailsPerPage: n })}
-                className={`px-4 py-2 text-sm rounded-full border transition-colors ${
-                  (s.emailsPerPage || 20) === n
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-perpage-${n}`}
-              >
-                {n}
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-[#5f6368]">Number of emails displayed per page in your inbox.</p>
-        </div>
+function ComposingPanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm text-[#202124]">Conversation view</div>
-            <div className="text-xs text-[#5f6368]">Group emails of the same topic together</div>
-          </div>
-          <button
-            onClick={() => update({ conversationView: !s.conversationView })}
-            className={`w-10 h-6 rounded-full transition-colors relative ${s.conversationView ? "bg-[#0b57d0]" : "bg-[#dadce0]"}`}
-            data-testid="toggle-conversation-view"
-          >
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${s.conversationView ? "left-5" : "left-1"}`} />
-          </button>
-        </div>
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Composing" subtitle="Customise how you write and send emails" isPending={isPending} />
 
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="text-sm text-[#202124]">Show labels on emails</div>
-            <div className="text-xs text-[#5f6368]">Display label badges in the email list and reading view</div>
-          </div>
-          <button
-            onClick={() => update({ showLabels: !s.showLabels })}
-            className={`w-10 h-6 rounded-full transition-colors relative ${s.showLabels ? "bg-[#0b57d0]" : "bg-[#dadce0]"}`}
-            data-testid="toggle-show-labels"
-          >
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 transition-all ${s.showLabels ? "left-5" : "left-1"}`} />
-          </button>
-        </div>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-4">
-        <h4 className="text-sm font-medium text-[#202124]">Trash</h4>
-
-        <div className="space-y-2">
-          <Label className="text-xs text-[#5f6368]">Auto-delete trashed emails after</Label>
-          <div className="flex gap-2">
-            {[30, 60, 90, 180].map(days => (
-              <button
-                key={days}
-                onClick={() => update({ trashRetentionDays: days })}
-                className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
-                  (s.trashRetentionDays || 30) === days
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-trash-${days}`}
-              >
-                {days} days
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-[#5f6368]">
-            Emails in Trash will be automatically and permanently deleted after {s.trashRetentionDays || 30} days.
-          </p>
-        </div>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-4">
-        <h4 className="text-sm font-medium text-[#202124]">Spam</h4>
-
-        <div className="space-y-2">
-          <Label className="text-xs text-[#5f6368]">Auto-empty spam after</Label>
-          <div className="flex gap-2">
-            {[7, 30, 60, 90].map(days => (
-              <button
-                key={days}
-                onClick={() => update({ spamRetentionDays: days })}
-                className={`px-3 py-1.5 text-sm rounded-full border transition-colors ${
-                  (s.spamRetentionDays || 30) === days
-                    ? "border-[#0b57d0] bg-[#e8f0fe] text-[#0b57d0]"
-                    : "border-[#dadce0] text-[#5f6368] hover:bg-[#f1f3f4]"
-                }`}
-                data-testid={`button-spam-${days}`}
-              >
-                {days} days
-              </button>
-            ))}
-          </div>
-          <p className="text-xs text-[#5f6368]">
-            Emails in Spam will be automatically and permanently deleted after {s.spamRetentionDays || 30} days.
-          </p>
-        </div>
-      </div>
-
-      <Separator />
-
-      <div className="space-y-4">
-        <h4 className="text-sm font-medium text-[#202124]">Composing</h4>
-
+      <SettingSection label="Default send account" description="Pre-selected when you open a new compose window">
         <DefaultSendAccountSetting value={s.defaultSendAccountId || ""} onChange={(id) => update({ defaultSendAccountId: id })} />
+      </SettingSection>
 
-      </div>
+      <Separator />
+
+      <SettingSection label="Send cancellation window" description="Brief delay before an email is actually sent — lets you undo if needed">
+        <div className="flex gap-3 flex-wrap">
+          {([0, 5, 10, 30] as const).map(secs => (
+            <button key={secs} onClick={() => update({ sendCancellation: secs })} className={PILL((s.sendCancellation ?? 5) === secs)} data-testid={`button-send-cancel-${secs}`}>
+              {secs === 0 ? "Off" : `${secs}s`}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#9aa0a6]">
+          {(s.sendCancellation ?? 5) === 0 ? "Emails send immediately with no undo window." : `You have ${s.sendCancellation ?? 5} seconds to cancel after hitting Send.`}
+        </p>
+      </SettingSection>
+
+      <Separator />
+
+      <SettingSection label="Email signature" description="Automatically appended to the bottom of every new email you write">
+        <textarea
+          value={s.signature || ""}
+          onChange={(e) => update({ signature: e.target.value })}
+          placeholder={"Best regards,\nYour Name"}
+          rows={5}
+          className="w-full px-3 py-2.5 text-sm border border-[#dadce0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent resize-none bg-white"
+          data-testid="textarea-signature"
+        />
+        <p className="text-xs text-[#9aa0a6]">Plain text only. Shown as-is in the compose window.</p>
+      </SettingSection>
+    </div>
+  );
+}
+
+// ─── Storage panel ────────────────────────────────────────────────────────────
+
+function StoragePanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
+
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Storage & Retention" subtitle="Control how long deleted and spam emails are kept before permanent removal" isPending={isPending} />
+
+      <SettingSection label="Trash retention" description="Emails moved to Trash are permanently deleted after this period">
+        <div className="flex gap-3 flex-wrap">
+          {[30, 60, 90, 180].map(days => (
+            <button key={days} onClick={() => update({ trashRetentionDays: days })} className={PILL((s.trashRetentionDays || 30) === days)} data-testid={`button-trash-${days}`}>
+              {days} days
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#9aa0a6]">Trashed emails older than {s.trashRetentionDays || 30} days are removed permanently on the next cleanup cycle.</p>
+      </SettingSection>
+
+      <Separator />
+
+      <SettingSection label="Spam retention" description="Emails in Spam are automatically purged after this period">
+        <div className="flex gap-3 flex-wrap">
+          {[7, 30, 60, 90].map(days => (
+            <button key={days} onClick={() => update({ spamRetentionDays: days })} className={PILL((s.spamRetentionDays || 30) === days)} data-testid={`button-spam-${days}`}>
+              {days} days
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-[#9aa0a6]">Spam older than {s.spamRetentionDays || 30} days is removed permanently on the next cleanup cycle.</p>
+      </SettingSection>
     </div>
   );
 }

@@ -207,35 +207,58 @@
 }
 
 @media print {
+  @page {
+    margin: 1.5cm;
+  }
+
   body {
     overflow: visible !important;
     background: white !important;
+    font-family: Georgia, "Times New Roman", serif;
+    font-size: 11pt;
+    color: #000 !important;
   }
 
   [data-testid="sidebar"],
   [data-testid="compose-panel"],
+  [data-testid="email-list"],
+  [data-testid="toolbar"],
   [data-testid="button-back"],
   [data-testid="button-compose"],
+  [data-testid="inline-reply-composer"],
+  [data-testid="button-more-actions"],
+  [data-testid="button-reply"],
+  [data-testid="button-reply-all"],
+  [data-testid="button-forward"],
+  [data-testid="button-delete"],
+  [data-testid="button-archive"],
+  [data-testid="button-star"],
+  [data-testid="button-toggle-read"],
+  [data-testid="button-label"],
+  [data-testid="button-unsubscribe"],
+  [data-testid="banner-spam"],
   .email-toolbar-actions,
   .email-bottom-actions,
-  nav,
-  header,
-  footer,
-  button,
   .no-print {
     display: none !important;
   }
 
+  html, body, #root {
+    height: auto !important;
+    overflow: visible !important;
+  }
+
   [data-testid="email-view"] {
-    position: absolute !important;
-    left: 0 !important;
-    top: 0 !important;
+    position: static !important;
+    display: block !important;
     width: 100% !important;
     max-width: 100% !important;
-    padding: 20px !important;
+    padding: 0 !important;
     margin: 0 !important;
     overflow: visible !important;
     height: auto !important;
+    box-shadow: none !important;
+    border: none !important;
   }
 
   [data-radix-scroll-area-viewport],
@@ -245,15 +268,60 @@
     max-height: none !important;
   }
 
+  .print-email-header {
+    display: block !important;
+    border-bottom: 2px solid #000;
+    padding-bottom: 12pt;
+    margin-bottom: 16pt;
+  }
+
+  .print-email-header h1 {
+    font-size: 16pt;
+    font-weight: bold;
+    margin: 0 0 8pt 0;
+    color: #000;
+  }
+
+  .print-email-header table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 10pt;
+    color: #333;
+  }
+
+  .print-email-header td:first-child {
+    font-weight: bold;
+    width: 60pt;
+    vertical-align: top;
+    padding: 1.5pt 6pt 1.5pt 0;
+  }
+
+  .print-email-header td:last-child {
+    padding: 1.5pt 0;
+  }
+
   .email-html-body {
-    font-size: 12pt !important;
-    line-height: 1.5 !important;
-    color: black !important;
+    font-size: 11pt !important;
+    line-height: 1.6 !important;
+    color: #000 !important;
+    max-width: 100% !important;
+    overflow-wrap: break-word !important;
   }
 
   .email-html-body a {
-    color: black !important;
+    color: #000 !important;
     text-decoration: underline !important;
+  }
+
+  .email-html-body img {
+    max-width: 100% !important;
+  }
+
+  pre {
+    font-family: "Courier New", monospace;
+    font-size: 10pt;
+    white-space: pre-wrap;
+    word-break: break-word;
   }
 
   * {

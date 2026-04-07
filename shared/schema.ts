@@ -109,6 +109,11 @@ export const generalSettingsSchema = z.object({
   emailsPerPage: z.number().default(20),
   clockFormat: z.enum(["12h", "24h"]).default("12h"),
   darkMode: z.boolean().default(false),
+  vacationReplyEnabled: z.boolean().default(false),
+  vacationSubject: z.string().default(""),
+  vacationBody: z.string().default(""),
+  vacationStartDate: z.string().optional(),
+  vacationEndDate: z.string().optional(),
 });
 
 export type GeneralSettings = z.infer<typeof generalSettingsSchema>;

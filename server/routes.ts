@@ -14,6 +14,63 @@ declare module "express-serve-static-core" {
   }
 }
 
+const vacationRepliedTo = new Map<string, Set<string>>();
+
+async function maybeSendVacationReply(
+  userId: string,
+  storage: UserStorage,
+  incomingEmail: Email,
+  account: { email: string; smtpHost?: string; smtpPort?: number; smtpTls?: boolean; username: string; password: string; name: string }
+): Promise<void> {
+  try {
+    const settings = await storage.getSettings();
+    if (!settings.vacationReplyEnabled) return;
+
+    const now = new Date();
+    if (settings.vacationStartDate) {
+      if (now < new Date(settings.vacationStartDate)) return;
+    }
+    if (settings.vacationEndDate) {
+      const end = new Date(settings.vacationEndDate);
+      end.setHours(23, 59, 59, 999);
+      if (now > end) return;
+    }
+
+    const senderEmail = (incomingEmail.sender.email || "").toLowerCase();
+    if (!senderEmail) return;
+    if (senderEmail === account.email.toLowerCase()) return;
+    if (/no.?reply|do.not.reply|mailer.daemon|postmaster/i.test(senderEmail)) return;
+    if (incomingEmail.listUnsubscribeUrl || incomingEmail.listUnsubscribeMail) return;
+
+    if (!account.smtpHost || !account.smtpPort) return;
+
+    const key = `${userId}:${senderEmail}`;
+    if (!vacationRepliedTo.has(userId)) vacationRepliedTo.set(userId, new Set());
+    const sent = vacationRepliedTo.get(userId)!;
+    if (sent.has(senderEmail)) return;
+    sent.add(senderEmail);
+
+    const subject = settings.vacationSubject || "Out of Office";
+    const body = settings.vacationBody || "I am currently out of office and will respond when I return.";
+    const replySubject = incomingEmail.subject.startsWith("Re:")
+      ? incomingEmail.subject
+      : `Re: ${incomingEmail.subject}`;
+
+    await sendSmtpEmail(
+      account as any,
+      senderEmail,
+      replySubject,
+      body,
+      undefined,
+      undefined,
+      { inReplyTo: incomingEmail.messageId, references: incomingEmail.messageId }
+    );
+    addLog(userId, "info", "Vacation reply", `Auto-replied to ${senderEmail} re: "${incomingEmail.subject}"`);
+  } catch {
+    // best-effort
+  }
+}
+
 function requireAuth(req: Request, res: Response, next: NextFunction): void {
   if (!req.session?.userId) {
     res.status(401).json({ message: "Not authenticated" });
@@ -39,7 +96,7 @@ const autoFetchTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
 type LogEntry = { timestamp: string; level: "info" | "warn" | "error" | "success"; source: string; message: string };
 const userLogs: Map<string, LogEntry[]> = new Map();
-const MAX_LOGS = 1000;
+const MAX_LOGS = 2000;
 
 export function addLog(userId: string, level: LogEntry["level"], source: string, message: string) {
   if (!userLogs.has(userId)) userLogs.set(userId, []);
@@ -94,6 +151,9 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
         if (result.rawAttachments.length > 0) {
           saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
           addLog(userId, "info", "Auto-fetch", `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
+        }
+        if (created.folder === "inbox") {
+          maybeSendVacationReply(userId, storage, created, account).catch(() => {});
         }
         imported++;
       }
@@ -250,6 +310,7 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Username already taken" });
     }
     const user = await globalStorage.createUser({ username, password, displayName: displayName || username });
+    addLog(req.session.userId!, "info", "Admin", `Created new user account "${username}"`);
     res.json({ id: user.id, username: user.username, displayName: user.displayName });
   });
 
@@ -260,6 +321,8 @@ export async function registerRoutes(
     }
     const user = await globalStorage.getUserByUsername(username);
     if (!user || !verifyPassword(password, user.password)) {
+      if (user) addLog(user.id, "warn", "Auth", `Failed login attempt for "${username}" (wrong password)`);
+      else console.warn(`[Auth] Failed login attempt for unknown username "${username}"`);
       return res.status(401).json({ message: "Invalid username or password" });
     }
     const newHash = rehashIfNeeded(password, user.password);
@@ -331,8 +394,10 @@ export async function registerRoutes(
     if (!password || password.length < 4) {
       return res.status(400).json({ message: "Password must be at least 4 characters" });
     }
+    const target = await globalStorage.getUser(req.params.id);
     const success = await globalStorage.resetUserPassword(req.params.id, password);
     if (!success) return res.status(404).json({ message: "User not found" });
+    addLog(req.session.userId!, "warn", "Admin", `Password reset for user "${target?.username || req.params.id}"`);
     res.json({ message: "Password reset successfully" });
   });
 
@@ -340,8 +405,10 @@ export async function registerRoutes(
     if (req.params.id === req.session.userId) {
       return res.status(400).json({ message: "Cannot delete your own account" });
     }
+    const target = await globalStorage.getUser(req.params.id);
     const success = await globalStorage.deleteUser(req.params.id);
     if (!success) return res.status(404).json({ message: "User not found" });
+    addLog(req.session.userId!, "warn", "Admin", `User account "${target?.username || req.params.id}" deleted`);
     res.json({ message: "User deleted" });
   });
 
@@ -406,6 +473,7 @@ export async function registerRoutes(
 
   app.get("/api/emails/:id/attachments/:attachmentId", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const email = await storage.getEmail(req.params.id);
     if (!email) return res.status(404).json({ message: "Email not found" });
 
@@ -415,6 +483,7 @@ export async function registerRoutes(
     const filePath = getAttachmentPath(req.params.id, req.params.attachmentId, attachment.filename, storage.getAttachmentsDir());
     if (!filePath) return res.status(404).json({ message: "Attachment file not found on disk" });
 
+    addLog(userId, "info", "Attachments", `Downloaded "${attachment.filename}" (${(attachment.size / 1024).toFixed(1)} KB) from "${email.subject}"`);
     res.setHeader("Content-Type", attachment.contentType);
     res.setHeader("Content-Disposition", `attachment; filename="${attachment.filename}"`);
     res.sendFile(resolve(filePath));
@@ -456,6 +525,7 @@ export async function registerRoutes(
 
     const emlContent = lines.join("\r\n");
     const safeSubject = email.subject.replace(/[^a-zA-Z0-9 _-]/g, "_").substring(0, 50).trim() || "email";
+    addLog(req.session.userId!, "info", "Export", `Exported "${email.subject}" as EML file`);
     res.setHeader("Content-Type", "message/rfc822");
     res.setHeader("Content-Disposition", `attachment; filename="${safeSubject}.eml"`);
     res.send(emlContent);
@@ -463,16 +533,20 @@ export async function registerRoutes(
 
   app.patch("/api/emails/:id/star", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const email = await storage.toggleStar(req.params.id);
     if (!email) return res.status(404).json({ message: "Email not found" });
+    addLog(userId, "info", "Email", `${email.isStarred ? "Starred" : "Unstarred"} "${email.subject}"`);
     res.json(email);
   });
 
   app.patch("/api/emails/:id/read", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const { isUnread } = req.body;
     const email = await storage.markRead(req.params.id, isUnread);
     if (!email) return res.status(404).json({ message: "Email not found" });
+    addLog(userId, "info", "Email", `Marked "${email.subject}" as ${isUnread ? "unread" : "read"}`);
     res.json(email);
   });
 
@@ -556,19 +630,23 @@ export async function registerRoutes(
 
   app.post("/api/emails/batch/read", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const { ids, isUnread } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ message: "ids must be an array" });
     const count = await storage.bulkUpdateEmails(ids, { isUnread });
+    addLog(userId, "info", "Email", `Marked ${count} email(s) as ${isUnread ? "unread" : "read"}`);
     res.json({ updated: count });
   });
 
   app.post("/api/emails/batch/star", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const { ids } = req.body;
     if (!Array.isArray(ids)) return res.status(400).json({ message: "ids must be an array" });
     for (const id of ids) {
       await storage.toggleStar(id);
     }
+    addLog(userId, "info", "Email", `Toggled star on ${ids.length} email(s)`);
     res.json({ updated: ids.length });
   });
 
@@ -633,6 +711,7 @@ export async function registerRoutes(
 
   app.post("/api/emails/:id/unsubscribe", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const email = await storage.getEmail(req.params.id);
     if (!email) return res.status(404).json({ message: "Email not found" });
 
@@ -651,13 +730,16 @@ export async function registerRoutes(
           signal: AbortSignal.timeout(10000),
         });
         if (response.ok) {
+          addLog(userId, "success", "Unsubscribe", `One-click unsubscribe successful for "${email.subject}" from ${email.sender.email}`);
           return res.json({ type: "success" });
         }
       } catch {}
+      addLog(userId, "info", "Unsubscribe", `Redirected to unsubscribe URL for "${email.subject}" from ${email.sender.email}`);
       return res.json({ type: "url", url: listUnsubscribeUrl });
     }
 
     if (listUnsubscribeUrl) {
+      addLog(userId, "info", "Unsubscribe", `Redirected to unsubscribe URL for "${email.subject}" from ${email.sender.email}`);
       return res.json({ type: "url", url: listUnsubscribeUrl });
     }
 
@@ -666,6 +748,7 @@ export async function registerRoutes(
       const to = qIndex === -1 ? listUnsubscribeMail : listUnsubscribeMail.slice(0, qIndex);
       const params = new URLSearchParams(qIndex === -1 ? "" : listUnsubscribeMail.slice(qIndex + 1));
       const subject = params.get("subject") || "Unsubscribe";
+      addLog(userId, "info", "Unsubscribe", `Mailto unsubscribe initiated for "${email.subject}" from ${email.sender.email} → ${to}`);
       return res.json({ type: "mailto", to, subject });
     }
   });
@@ -965,6 +1048,9 @@ export async function registerRoutes(
         if (result.rawAttachments.length > 0) {
           saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
           addLog(userId, "info", "Manual fetch", `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
+        }
+        if (created.folder === "inbox") {
+          maybeSendVacationReply(userId, storage, created, account).catch(() => {});
         }
         imported++;
       }
