@@ -106,6 +106,7 @@ export const generalSettingsSchema = z.object({
   trashRetentionDays: z.number().default(30),
   spamRetentionDays: z.number().default(30),
   defaultSendAccountId: z.string().default(""),
+  replyStyle: z.enum(["popout", "inline"]).default("popout"),
   emailsPerPage: z.number().default(20),
   clockFormat: z.enum(["12h", "24h"]).default("12h"),
   darkMode: z.boolean().default(false),

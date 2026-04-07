@@ -1366,6 +1366,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
             signature={settings?.signature || ""}
             sendCancellation={settings?.sendCancellation || 0}
             defaultSendAccountId={settings?.defaultSendAccountId || ""}
+            replyStyle={settings?.replyStyle || "popout"}
             onPopOutCompose={(defaults) => {
               setComposeDefaults(defaults);
               setComposeOpen(true);
@@ -2100,6 +2101,7 @@ function EmailView({
   signature,
   sendCancellation,
   defaultSendAccountId,
+  replyStyle,
   onPopOutCompose,
 }: {
   email: Email;
@@ -2126,6 +2128,7 @@ function EmailView({
   signature: string;
   sendCancellation: number;
   defaultSendAccountId: string;
+  replyStyle: "popout" | "inline";
   onPopOutCompose: (defaults: {to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string}) => void;
 }) {
   const [viewMode, setViewMode] = useState<"html" | "text">("html");
@@ -2200,6 +2203,56 @@ function EmailView({
     return div.innerHTML;
   };
 
+  const handlePrint = () => {
+    const dateStr = format(new Date(fullEmail.date), "EEE, MMM d, yyyy 'at' h:mm a");
+    const senderEmail = fullEmail.sender?.email || fullEmail.from || "";
+    const senderName = fullEmail.sender?.name || "";
+    const senderDisplay = senderName ? `${senderName} <${senderEmail}>` : senderEmail;
+    const toList = (fullEmail.to || []).map((r: {name?: string; email: string}) =>
+      r.name ? `${r.name} <${r.email}>` : r.email
+    ).join(", ");
+    const ccList = (fullEmail.cc || []).map((r: {name?: string; email: string}) =>
+      r.name ? `${r.name} <${r.email}>` : r.email
+    ).join(", ");
+    const bodyHtml = sanitizedHtml
+      ? sanitizedHtml
+      : `<pre style="white-space:pre-wrap;font-family:inherit;font-size:11pt">${escapeHtml(fullEmail.body || "")}</pre>`;
+
+    const win = window.open("", "_blank", "width=900,height=700");
+    if (!win) return;
+    win.document.write(`<!DOCTYPE html>
+<html lang="en"><head>
+  <meta charset="UTF-8">
+  <title>${escapeHtml(fullEmail.subject || "(no subject)")}</title>
+  <style>
+    @page { margin: 2cm; }
+    body { font-family: Arial, Helvetica, sans-serif; font-size: 11pt; color: #000; margin: 0; background: #fff; }
+    h1 { font-size: 16pt; font-weight: bold; margin: 0 0 12pt 0; line-height: 1.3; }
+    table.meta { border-collapse: collapse; font-size: 10pt; margin-bottom: 0; }
+    table.meta td { vertical-align: top; padding: 2pt 0; }
+    table.meta td.label { font-weight: bold; width: 52pt; padding-right: 8pt; white-space: nowrap; }
+    hr { border: none; border-top: 2px solid #000; margin: 12pt 0 16pt 0; }
+    .body { font-size: 11pt; line-height: 1.6; word-break: break-word; }
+    .body img { max-width: 100% !important; height: auto !important; }
+    .body a { color: #1a0dab; }
+    * { box-sizing: border-box; }
+  </style>
+</head><body>
+  <h1>${escapeHtml(fullEmail.subject || "(no subject)")}</h1>
+  <table class="meta">
+    <tr><td class="label">From:</td><td>${escapeHtml(senderDisplay)}</td></tr>
+    <tr><td class="label">To:</td><td>${escapeHtml(toList)}</td></tr>
+    ${ccList ? `<tr><td class="label">Cc:</td><td>${escapeHtml(ccList)}</td></tr>` : ""}
+    <tr><td class="label">Date:</td><td>${escapeHtml(dateStr)}</td></tr>
+  </table>
+  <hr>
+  <div class="body">${bodyHtml}</div>
+</body></html>`);
+    win.document.close();
+    win.focus();
+    setTimeout(() => { win.print(); }, 300);
+  };
+
   const buildQuotedBody = (em: Email, fullBody: string) => {
     const dateStr = escapeHtml(format(new Date(em.date), "EEE, MMM d, yyyy 'at' h:mm a"));
     const senderStr = `${escapeHtml(em.sender.name)} &lt;${escapeHtml(em.sender.email)}&gt;`;
@@ -2249,9 +2302,13 @@ function EmailView({
         };
       }
 
-      setInlineReplyDefaults(defaults);
-      setInlineReplyMode(mode);
-      setInlineReplyKey(k => k + 1);
+      if (replyStyle === "popout") {
+        onPopOutCompose(defaults);
+      } else {
+        setInlineReplyDefaults(defaults);
+        setInlineReplyMode(mode);
+        setInlineReplyKey(k => k + 1);
+      }
     } catch {}
   };
 
@@ -2379,7 +2436,7 @@ function EmailView({
                 <Download className="h-4 w-4 flex-shrink-0" />
                 Download as .eml
               </button>
-              <button onClick={() => { window.print(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-print">
+              <button onClick={() => { handlePrint(); setMoreMenuOpen(false); }} className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3" data-testid="menu-print">
                 <Printer className="h-4 w-4 flex-shrink-0" />
                 Print
               </button>
@@ -4973,6 +5030,24 @@ function ComposingPanel() {
 
       <SettingSection label="Default send account" description="Pre-selected when you open a new compose window">
         <DefaultSendAccountSetting value={s.defaultSendAccountId || ""} onChange={(id) => update({ defaultSendAccountId: id })} />
+      </SettingSection>
+
+      <Separator />
+
+      <SettingSection label="Reply compose style" description="Choose how the compose window opens when you reply or forward an email">
+        <div className="flex gap-3 flex-wrap">
+          <button onClick={() => update({ replyStyle: "popout" })} className={PILL((s.replyStyle || "popout") === "popout")} data-testid="button-reply-style-popout">
+            Floating window
+          </button>
+          <button onClick={() => update({ replyStyle: "inline" })} className={PILL((s.replyStyle || "popout") === "inline")} data-testid="button-reply-style-inline">
+            Inline (below email)
+          </button>
+        </div>
+        <p className="text-xs text-[#9aa0a6]">
+          {(s.replyStyle || "popout") === "popout"
+            ? "Replies open in a floating window — you can read the original email while composing."
+            : "Replies expand inline below the email you're reading."}
+        </p>
       </SettingSection>
 
       <Separator />
