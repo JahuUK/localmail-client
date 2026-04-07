@@ -2689,6 +2689,17 @@ function InlineReplyComposer({
         editorRef.current.innerHTML = defaults.body;
       }
     }
+    requestAnimationFrame(() => {
+      if (editorRef.current) {
+        editorRef.current.focus();
+        const range = document.createRange();
+        range.selectNodeContents(editorRef.current);
+        range.collapse(true);
+        const sel = window.getSelection();
+        sel?.removeAllRanges();
+        sel?.addRange(range);
+      }
+    });
   }, []);
 
   const syncBody = () => {
@@ -3187,6 +3198,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const savingRef = useRef(false);
   const draftIdRef = useRef<string | null>(null);
+  const userHasEditedRef = useRef(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const queryClient = useQueryClient();
@@ -3208,8 +3220,25 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     }
     if (!open) {
       defaultsAppliedRef.current = false;
+      userHasEditedRef.current = false;
     }
   }, [open, defaults]);
+
+  useEffect(() => {
+    if (open && defaults?.to) {
+      requestAnimationFrame(() => {
+        if (editorRef.current) {
+          editorRef.current.focus();
+          const range = document.createRange();
+          range.selectNodeContents(editorRef.current);
+          range.collapse(true);
+          const sel = window.getSelection();
+          sel?.removeAllRanges();
+          sel?.addRange(range);
+        }
+      });
+    }
+  }, [open]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -3279,7 +3308,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   }, [to, cc, bcc, subject, body, selectedAccountId, hasContent, queryClient]);
 
   useEffect(() => {
-    if (!open || !hasContent) return;
+    if (!open || !hasContent || !userHasEditedRef.current) return;
     if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     draftTimerRef.current = setTimeout(() => {
       saveDraft();
@@ -3326,6 +3355,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   };
 
   const handleContactFieldChange = (field: "to" | "cc" | "bcc", value: string) => {
+    userHasEditedRef.current = true;
     if (field === "to") setTo(value);
     else if (field === "cc") setCc(value);
     else setBcc(value);
@@ -3537,7 +3567,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
               onBlur={() => setTimeout(() => { if (activeContactField === "to") setContactSuggestions([]); }, 200)}
               className="flex-1 text-sm outline-none"
               placeholder="Recipients"
-              autoFocus
+              autoFocus={!defaults?.to}
               data-testid="input-compose-to"
             />
             {!showCcBcc && (
@@ -3622,7 +3652,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           <div className="flex items-center border-b border-[#e0e0e0] py-1.5">
             <input
               value={subject}
-              onChange={(e) => setSubject(e.target.value)}
+              onChange={(e) => { userHasEditedRef.current = true; setSubject(e.target.value); }}
               className="flex-1 text-sm outline-none"
               placeholder="Subject"
               data-testid="input-compose-subject"
@@ -3634,7 +3664,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           ref={editorRef}
           contentEditable
           suppressContentEditableWarning
-          onInput={syncBody}
+          onInput={() => { userHasEditedRef.current = true; syncBody(); }}
           onPaste={handlePaste}
           onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="flex-1 px-3 text-sm outline-none py-2 overflow-y-auto min-h-[80px]"
