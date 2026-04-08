@@ -4,6 +4,8 @@
 
 A self-hosted, Gmail-inspired email client. Connect your existing email accounts via POP3, IMAP, and SMTP — read, send, and organise your mail through a familiar web interface, without relying on any third-party cloud service. Your data never leaves your machine.
 
+![LoginScreenshot](https://github.com/JahuUK/localmail-client/blob/main/readmescreenshots/image1.png?raw=true)
+
 ---
 
 ## Features
@@ -22,6 +24,12 @@ A self-hosted, Gmail-inspired email client. Connect your existing email accounts
 - **Export and print** — Download any email as a .eml file or print with a clean layout
 - **Attachment previews** — Images with lightbox, inline PDF viewer, standard download for other types
 
+![MainUI](https://github.com/JahuUK/localmail-client/blob/main/readmescreenshots/image2.png?raw=true)
+
+![General Settings](https://github.com/JahuUK/localmail-client/blob/main/readmescreenshots/image3.png?raw=true)
+
+![Account Settings](https://github.com/JahuUK/localmail-client/blob/main/readmescreenshots/image4.png?raw=true)
+
 ### Security
 
 - User passwords hashed with **bcrypt**
@@ -30,6 +38,8 @@ A self-hosted, Gmail-inspired email client. Connect your existing email accounts
 - Cloud backup credentials **encrypted at rest**
 - Deleted message IDs tracked to prevent re-import after permanent deletion
 - Session-based authentication; sessions invalidated on logout
+
+
 
 ---
 
