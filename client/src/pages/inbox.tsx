@@ -4384,16 +4384,17 @@ function MyAccountsPanel() {
     setTestingAccountIds(prev => { const s = new Set(Array.from(prev)); s.add(account.id); return s; });
     setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.delete(account.id); return m; });
     try {
-      const res = await apiRequest("POST", "/api/accounts/test-incoming", {
-        protocol: account.protocol || "pop3",
-        host: account.host,
-        port: account.port,
-        tls: account.tls,
-        username: account.username,
-        password: account.password,
-      });
+      const res = await apiRequest("POST", `/api/accounts/${account.id}/test`, {});
       const data = await res.json();
-      setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.set(account.id, data); return m; });
+      const incoming = data.incoming as { success: boolean; message: string };
+      const smtp = data.smtp as { success: boolean; message: string } | undefined;
+      const overallSuccess = incoming.success && (smtp ? smtp.success : true);
+      const smtpPart = smtp ? ` · SMTP: ${smtp.success ? "OK" : smtp.message}` : "";
+      setAccountTestResults(prev => {
+        const m = new Map(Array.from(prev));
+        m.set(account.id, { success: overallSuccess, message: `${incoming.success ? "OK" : incoming.message}${smtpPart}` });
+        return m;
+      });
     } catch (e: any) {
       setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.set(account.id, { success: false, message: e.message || "Connection failed" }); return m; });
     } finally {

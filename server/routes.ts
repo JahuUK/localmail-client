@@ -966,6 +966,45 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  app.post("/api/accounts/:id/test", requireAuth, async (req, res) => {
+    const storage = getUserStorage(req);
+    const userId = req.session.userId!;
+    const account = await storage.getAccount(req.params.id);
+    if (!account) return res.status(404).json({ success: false, message: "Account not found" });
+
+    const startTime = Date.now();
+    const proto = (account.protocol || "pop3").toUpperCase();
+    addLog(userId, "info", "Test connection", `Testing ${proto} connection to ${account.host}:${account.port}…`);
+
+    const result = await testIncomingConnection({
+      protocol: account.protocol || "pop3",
+      host: account.host,
+      port: account.port,
+      username: account.username,
+      password: account.password || "",
+      tls: account.tls !== false,
+    });
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    addLog(userId, result.success ? "success" : "error", "Test connection", `${proto} ${account.host}:${account.port} — ${result.message} (${elapsed}s)`);
+
+    let smtpResult: { success: boolean; message: string } | undefined;
+    if (account.smtpHost) {
+      const smtpStart = Date.now();
+      addLog(userId, "info", "Test connection", `Testing SMTP connection to ${account.smtpHost}:${account.smtpPort}…`);
+      smtpResult = await testSmtpConnection({
+        host: account.smtpHost,
+        port: account.smtpPort || 587,
+        username: account.username,
+        password: account.smtpPassword || account.password || "",
+        tls: account.smtpTls !== false,
+      });
+      const smtpElapsed = ((Date.now() - smtpStart) / 1000).toFixed(1);
+      addLog(userId, smtpResult.success ? "success" : "error", "Test connection", `SMTP ${account.smtpHost}:${account.smtpPort} — ${smtpResult.message} (${smtpElapsed}s)`);
+    }
+
+    res.json({ incoming: result, smtp: smtpResult });
+  });
+
   app.post("/api/accounts", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
     const userId = req.session.userId!;
