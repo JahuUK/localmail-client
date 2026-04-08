@@ -1003,6 +1003,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   onFocus={() => setFilterPanelOpen(false)}
+                  autoComplete="off"
+                  name="search"
                   data-testid="input-search"
                 />
                 {(searchQuery || isFiltering) && (
@@ -4593,11 +4595,11 @@ function MyAccountsPanel() {
                     <div className="grid grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs text-[#5f6368]">Username</Label>
-                        <Input value={editForm.username} onChange={(e) => { setEditForm(f => ({ ...f, username: e.target.value })); setEditIncomingTestResult(null); setEditSmtpTestResult(null); }} data-testid="input-edit-username" />
+                        <Input value={editForm.username} onChange={(e) => { setEditForm(f => ({ ...f, username: e.target.value })); setEditIncomingTestResult(null); setEditSmtpTestResult(null); }} autoComplete="off" data-testid="input-edit-username" />
                       </div>
                       <div className="space-y-1.5">
                         <Label className="text-xs text-[#5f6368]">Password</Label>
-                        <Input type="password" value={editForm.password} onChange={(e) => { setEditForm(f => ({ ...f, password: e.target.value })); setEditIncomingTestResult(null); setEditSmtpTestResult(null); }} placeholder="Leave blank to keep current" data-testid="input-edit-password" />
+                        <Input type="password" value={editForm.password} onChange={(e) => { setEditForm(f => ({ ...f, password: e.target.value })); setEditIncomingTestResult(null); setEditSmtpTestResult(null); }} placeholder="Leave blank to keep current" autoComplete="new-password" data-testid="input-edit-password" />
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -4920,11 +4922,11 @@ function AddAccountPanel() {
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label className="text-xs text-[#5f6368]">Username</Label>
-              <Input value={username} onChange={(e) => { setUsername(e.target.value); setIncomingTestResult(null); setSmtpTestResult(null); }} placeholder="user@gmail.com" data-testid="input-incoming-username" />
+              <Input value={username} onChange={(e) => { setUsername(e.target.value); setIncomingTestResult(null); setSmtpTestResult(null); }} placeholder="user@gmail.com" autoComplete="off" data-testid="input-incoming-username" />
             </div>
             <div className="space-y-1.5">
               <Label className="text-xs text-[#5f6368]">Password</Label>
-              <Input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setIncomingTestResult(null); setSmtpTestResult(null); }} placeholder="App password" data-testid="input-incoming-password" />
+              <Input type="password" value={password} onChange={(e) => { setPassword(e.target.value); setIncomingTestResult(null); setSmtpTestResult(null); }} placeholder="App password" autoComplete="new-password" data-testid="input-incoming-password" />
             </div>
           </div>
           <div className="flex items-center gap-2">
