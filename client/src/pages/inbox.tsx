@@ -4068,7 +4068,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.2"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.3"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4081,8 +4081,19 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.2",
+      version: "v0.8.3",
       label: "Latest",
+      date: "April 2026",
+      summary: "Folder and label filtering improvements",
+      items: [
+        "Starred view no longer shows emails that have been moved to Trash or Spam",
+        "Label views now exclude emails in Trash or Spam",
+        "Account filter views now exclude emails in Trash or Spam",
+      ],
+    },
+    {
+      version: "v0.8.2",
+      label: "",
       date: "April 2026",
       summary: "Compose window bug fix and improvements",
       items: [
@@ -4230,7 +4241,7 @@ function AboutPanel() {
         </div>
         <div>
           <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
-          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.2</p>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.3</p>
           <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
             A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
           </p>

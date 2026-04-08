@@ -392,7 +392,7 @@ export class UserStorage {
   async getEmails(folder?: string): Promise<Email[]> {
     let entries = Array.from(this.emailIndex.values());
     if (folder === "starred") {
-      entries = entries.filter(e => e.isStarred);
+      entries = entries.filter(e => e.isStarred && e.folder !== "trash" && e.folder !== "spam");
     } else if (folder === "all") {
       entries = entries.filter(e => e.folder !== "spam" && e.folder !== "trash");
     } else if (folder) {
@@ -408,7 +408,7 @@ export class UserStorage {
 
   async getEmailsByLabel(labelId: string): Promise<Email[]> {
     const entries = Array.from(this.emailIndex.values())
-      .filter(e => e.labels?.includes(labelId))
+      .filter(e => e.labels?.includes(labelId) && e.folder !== "trash" && e.folder !== "spam")
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return entries.map(idx => ({
       ...idx,
@@ -702,7 +702,7 @@ export class UserStorage {
 
   async getEmailsByAccount(accountEmail: string): Promise<Email[]> {
     const entries = Array.from(this.emailIndex.values())
-      .filter(e => e.accountEmail === accountEmail)
+      .filter(e => e.accountEmail === accountEmail && e.folder !== "trash" && e.folder !== "spam")
       .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
     return entries.map(idx => ({
       ...idx,
