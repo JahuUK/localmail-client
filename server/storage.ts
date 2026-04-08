@@ -479,6 +479,7 @@ export class UserStorage {
   }
 
   async deleteEmail(id: string): Promise<boolean> {
+    if (!isValidId(id)) return false;
     const idx = this.emailIndex.get(id);
     if (!idx) return false;
     if (idx.messageId) {

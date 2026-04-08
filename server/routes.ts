@@ -7,6 +7,26 @@ import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, 
 import { resolve } from "path";
 import multer from "multer";
 import { existsSync, mkdirSync, unlinkSync } from "fs";
+import rateLimit from "express-rate-limit";
+
+// IP-based limiter for unauthenticated login endpoints — 10 attempts per 15 minutes
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many login attempts. Please try again in 15 minutes." },
+});
+
+// User-ID-based limiter for expensive authenticated backup operations — 5 per hour
+const backupLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => (req.session as any)?.userId ?? "unknown",
+  message: { message: "Too many backup requests. Please wait before trying again." },
+});
 
 declare module "express-serve-static-core" {
   interface Request {
@@ -314,7 +334,7 @@ export async function registerRoutes(
     res.json({ id: user.id, username: user.username, displayName: user.displayName });
   });
 
-  app.post("/api/auth/login", async (req, res) => {
+  app.post("/api/auth/login", loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
@@ -343,7 +363,7 @@ export async function registerRoutes(
     });
   });
 
-  app.post("/api/auth/admin-login", async (req, res) => {
+  app.post("/api/auth/admin-login", loginLimiter, async (req, res) => {
     const { username, password } = req.body;
     if (!username || !password) {
       return res.status(400).json({ message: "Username and password are required" });
@@ -1264,7 +1284,7 @@ export async function registerRoutes(
     res.json(backups);
   });
 
-  app.get("/api/backup/local/download", requireAuth, async (req, res) => {
+  app.get("/api/backup/local/download", requireAuth, backupLimiter, async (req, res) => {
     const userId = req.session.userId!;
     try {
       addLog(userId, "info", "Backup", "Creating local backup archive...");
@@ -1291,16 +1311,22 @@ export async function registerRoutes(
   if (!existsSync(uploadDir)) mkdirSync(uploadDir, { recursive: true });
   const upload = multer({ dest: uploadDir, limits: { fileSize: 500 * 1024 * 1024 } });
 
-  app.post("/api/backup/local/restore", requireAuth, upload.single("backup"), async (req, res) => {
+  app.post("/api/backup/local/restore", requireAuth, backupLimiter, upload.single("backup"), async (req, res) => {
     const userId = req.session.userId!;
     if (!req.file) return res.status(400).json({ success: false, message: "No file uploaded" });
+    const safeUploadDir = resolve(uploadDir);
+    const safeFilePath = resolve(req.file.path);
+    if (!safeFilePath.startsWith(safeUploadDir + "/") && safeFilePath !== safeUploadDir) {
+      try { unlinkSync(safeFilePath); } catch {}
+      return res.status(400).json({ success: false, message: "Invalid upload path" });
+    }
     try {
       addLog(userId, "info", "Backup", `Restoring from uploaded file: ${req.file.originalname}`);
-      const result = await restoreBackup(userId, req.file.path);
+      const result = await restoreBackup(userId, safeFilePath);
       addLog(userId, result.success ? "success" : "error", "Backup", result.success ? `Restored from "${req.file.originalname}"` : `Restore failed: ${result.message}`);
       res.json(result);
     } catch (err: any) {
-      try { unlinkSync(req.file.path); } catch {}
+      try { unlinkSync(safeFilePath); } catch {}
       addLog(userId, "error", "Backup", `Local restore failed: ${err.message}`);
       res.status(500).json({ success: false, message: err.message || "Restore failed" });
     }

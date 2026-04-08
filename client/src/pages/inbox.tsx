@@ -4049,7 +4049,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.1"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4062,8 +4062,19 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8",
+      version: "v0.8.1",
       label: "Latest",
+      date: "April 2026",
+      summary: "Security hardening and stability improvements",
+      items: [
+        "Several internal security improvements applied across the application",
+        "Hardened server-side input handling in multiple areas",
+        "Improved resilience of backup and restore operations",
+      ],
+    },
+    {
+      version: "v0.8",
+      label: "",
       date: "April 2026",
       summary: "Search improvements, drag-and-drop attachments, account UX overhaul",
       items: [
@@ -4189,7 +4200,7 @@ function AboutPanel() {
         </div>
         <div>
           <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
-          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8</p>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.1</p>
           <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
             A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
           </p>

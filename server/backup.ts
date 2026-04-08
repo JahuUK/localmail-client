@@ -1,7 +1,8 @@
 import { type BackupConfig } from "@shared/schema";
-import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, statSync, unlinkSync } from "fs";
+import { createReadStream, createWriteStream, cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, unlinkSync } from "fs";
 import { join, basename } from "path";
 import archiver from "archiver";
+import AdmZip from "adm-zip";
 import { randomUUID } from "crypto";
 
 const DATA_DIR = "data";
@@ -267,31 +268,31 @@ export async function downloadBackup(config: BackupConfig, fileName: string): Pr
 }
 
 export async function restoreBackup(userId: string, zipPath: string): Promise<{ success: boolean; message: string }> {
+  const backupDir = join(TEMP_DIR, `restore-${randomUUID()}`);
   try {
-    const { execSync } = await import("child_process");
     const userDir = join(DATA_DIR, "users", userId);
 
-    const backupDir = join(TEMP_DIR, `restore-${randomUUID()}`);
     mkdirSync(backupDir, { recursive: true });
 
-    execSync(`unzip -o "${zipPath}" -d "${backupDir}"`, { stdio: "pipe" });
+    const zip = new AdmZip(zipPath);
+    zip.extractAllTo(backupDir, true);
 
     const extractedUserDir = join(backupDir, "users", userId);
     if (!existsSync(extractedUserDir)) {
-      try { execSync(`rm -rf "${backupDir}"`, { stdio: "pipe" }); } catch {}
+      rmSync(backupDir, { recursive: true, force: true });
       return { success: false, message: "Backup does not contain data for this user" };
     }
 
-    execSync(`rm -rf "${userDir}"`, { stdio: "pipe" });
+    if (existsSync(userDir)) rmSync(userDir, { recursive: true, force: true });
     mkdirSync(userDir, { recursive: true });
-    execSync(`cp -r "${extractedUserDir}/"* "${userDir}/"`, { stdio: "pipe" });
-
-    try { execSync(`rm -rf "${backupDir}"`, { stdio: "pipe" }); } catch {}
-    try { unlinkSync(zipPath); } catch {}
+    cpSync(extractedUserDir, userDir, { recursive: true });
 
     return { success: true, message: "Backup restored. Please log out and log back in to see restored data." };
   } catch (err: any) {
     return { success: false, message: err.message || "Restore failed" };
+  } finally {
+    try { rmSync(backupDir, { recursive: true, force: true }); } catch {}
+    try { unlinkSync(zipPath); } catch {}
   }
 }
 
