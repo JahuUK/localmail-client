@@ -76,6 +76,10 @@ import {
   Bell,
   BellOff,
   Palmtree,
+  Info,
+  PlusCircle,
+  ListChecks,
+  Sparkles,
 } from "lucide-react";
 import { format, isToday, isThisYear } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -146,6 +150,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [filterStarred, setFilterStarred] = useState(false);
   const [filterDateRange, setFilterDateRange] = useState("");
   const [filterSearchBody, setFilterSearchBody] = useState(false);
+  const [filterFrom, setFilterFrom] = useState("");
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -155,8 +160,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   });
   const settings = settingsQuery.data;
 
-  const activeFiltersCount = [filterHasAttachment, filterUnread, filterStarred, !!filterDateRange, filterSearchBody, filterScope === "all"].filter(Boolean).length;
-  const isFiltering = !!(searchQuery || filterHasAttachment || filterUnread || filterStarred || filterDateRange || filterSearchBody);
+  const activeFiltersCount = [filterHasAttachment, filterUnread, filterStarred, !!filterDateRange, filterSearchBody, filterScope === "all", !!filterFrom].filter(Boolean).length;
+  const isFiltering = !!(searchQuery || filterHasAttachment || filterUnread || filterStarred || filterDateRange || filterSearchBody || filterFrom);
 
   const queryKey = (() => {
     const p = new URLSearchParams();
@@ -166,7 +171,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     else p.set("folder", activeFolder);
 
     if (isFiltering) {
-      if (searchQuery) p.set("search", searchQuery);
+      const combinedSearch = [filterFrom ? `from:${filterFrom}` : "", searchQuery].filter(Boolean).join(" ");
+      if (combinedSearch) p.set("search", combinedSearch);
       if (filterScope === "all") p.set("scope", "all");
       if (filterHasAttachment) p.set("hasAttachment", "1");
       if (filterUnread) p.set("unread", "1");
@@ -1047,6 +1053,19 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                       </div>
                     </div>
 
+                    {/* From / Sender filter */}
+                    <div className="mb-3">
+                      <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">From / Sender</div>
+                      <input
+                        type="text"
+                        className="w-full border border-[#dadce0] rounded-lg px-3 py-1.5 text-[12px] bg-white focus:outline-none focus:border-[#0b57d0]"
+                        placeholder="Name or email address…"
+                        value={filterFrom}
+                        onChange={e => setFilterFrom(e.target.value)}
+                        data-testid="filter-from"
+                      />
+                    </div>
+
                     {/* Date range */}
                     <div className="mb-3">
                       <div className="text-[11px] font-medium text-[#5f6368] uppercase tracking-wide mb-1.5">Date range</div>
@@ -1100,7 +1119,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                     {activeFiltersCount > 0 && (
                       <button
                         className="mt-3 w-full text-center text-[12px] text-[#c5221f] hover:text-[#a50e0e] font-medium"
-                        onClick={() => { setFilterScope("current"); setFilterHasAttachment(false); setFilterUnread(false); setFilterStarred(false); setFilterDateRange(""); setFilterSearchBody(false); }}
+                        onClick={() => { setFilterScope("current"); setFilterHasAttachment(false); setFilterUnread(false); setFilterStarred(false); setFilterDateRange(""); setFilterSearchBody(false); setFilterFrom(""); }}
                         data-testid="filter-clear-all"
                       >
                         Clear all filters
@@ -2664,8 +2683,19 @@ function InlineReplyComposer({
   const contactDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const processFiles = (files: FileList | File[]) => {
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        setAttachments(prev => [...prev, { name: file.name, size: file.size, type: file.type, dataUrl: reader.result as string }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   useEffect(() => {
     if (smtpAccounts.length > 0) {
@@ -2736,15 +2766,7 @@ function InlineReplyComposer({
   };
 
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = () => {
-        setAttachments(prev => [...prev, { name: file.name, size: file.size, type: file.type, dataUrl: reader.result as string }]);
-      };
-      reader.readAsDataURL(file);
-    });
+    if (e.target.files) processFiles(e.target.files);
     e.target.value = "";
   };
 
@@ -2833,7 +2855,18 @@ function InlineReplyComposer({
   const ModeIcon = mode === "reply" ? Reply : mode === "replyAll" ? ReplyAll : Forward;
 
   return (
-    <div className="mt-6 border border-[#dadce0] rounded-2xl overflow-hidden no-print" data-testid="inline-reply-composer">
+    <div
+      className={`mt-6 border rounded-2xl overflow-hidden no-print relative ${isDragOver ? "border-[#1a73e8] border-2" : "border-[#dadce0]"}`}
+      data-testid="inline-reply-composer"
+      onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false); }}
+      onDrop={e => { e.preventDefault(); setIsDragOver(false); if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files); }}
+    >
+      {isDragOver && (
+        <div className="absolute inset-0 z-10 bg-[#e8f0fe]/80 flex items-center justify-center rounded-2xl pointer-events-none">
+          <div className="text-[#1a73e8] font-medium text-sm">Drop files to attach</div>
+        </div>
+      )}
       <div className="flex items-center gap-2 px-4 py-2 bg-[#f6f8fc] border-b border-[#e0e0e0]">
         <ModeIcon className="h-4 w-4 text-[#5f6368]" />
         <span className="text-sm text-[#5f6368] flex-1">
@@ -3201,8 +3234,20 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   const userHasEditedRef = useRef(false);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isDragOver, setIsDragOver] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const processFiles = (files: FileList | File[]) => {
+    Array.from(files).forEach(file => {
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        const dataUrl = ev.target?.result as string;
+        setAttachments(prev => [...prev, { name: file.name, size: file.size, type: file.type, dataUrl }]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
 
   const defaultsAppliedRef = useRef(false);
   useEffect(() => {
@@ -3431,16 +3476,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   };
 
   const handleFileAttach = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onload = (ev) => {
-        const dataUrl = ev.target?.result as string;
-        setAttachments(prev => [...prev, { name: file.name, size: file.size, type: file.type, dataUrl }]);
-      };
-      reader.readAsDataURL(file);
-    });
+    if (e.target.files) processFiles(e.target.files);
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -3516,7 +3552,18 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     : "fixed bottom-0 right-6 z-50 flex flex-col bg-white rounded-t-xl shadow-2xl border border-[#dadce0] w-[850px] h-[648px]";
 
   return (
-    <div className={panelClasses} data-testid="compose-panel">
+    <div
+      className={`${panelClasses} relative`}
+      data-testid="compose-panel"
+      onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false); }}
+      onDrop={e => { e.preventDefault(); setIsDragOver(false); if (e.dataTransfer.files.length > 0) processFiles(e.dataTransfer.files); }}
+    >
+      {isDragOver && (
+        <div className="absolute inset-0 z-10 bg-[#e8f0fe]/80 flex items-center justify-center rounded-xl pointer-events-none border-2 border-[#1a73e8]">
+          <div className="text-[#1a73e8] font-medium text-sm">Drop files to attach</div>
+        </div>
+      )}
       <div className="px-3 py-2 bg-[#404040] text-white rounded-t-xl flex items-center justify-between cursor-default select-none">
         <h3 className="text-sm font-medium truncate">{subject || "New Message"}</h3>
         <div className="flex items-center gap-0.5">
@@ -3999,11 +4046,224 @@ function LogsPanel() {
   );
 }
 
+function AboutPanel() {
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8"]));
+
+  const toggleVersion = (v: string) => {
+    setOpenVersions(prev => {
+      const next = new Set(Array.from(prev));
+      if (next.has(v)) next.delete(v);
+      else next.add(v);
+      return next;
+    });
+  };
+
+  const versions = [
+    {
+      version: "v0.8",
+      label: "Latest",
+      date: "April 2026",
+      summary: "Search improvements, drag-and-drop attachments, account UX overhaul",
+      items: [
+        "From / Sender filter input added to the search filter panel",
+        "Drag-and-drop file attachment in the compose window and inline reply",
+        "Quick connection test button on each saved account card",
+        "Account settings split into separate 'My Accounts' and 'Add Account' tabs",
+        "About page added with version history",
+      ],
+    },
+    {
+      version: "v0.7",
+      label: "",
+      date: "April 2026",
+      summary: "Compose polish, reply style setting, hover states",
+      items: [
+        "Reply style preference: pop-out window or inline composer",
+        "Draft saving fixed — no phantom drafts created on reply pre-fill",
+        "Compose panel focuses the message body (not To) when replying",
+        "All 28 toolbar icon buttons given consistent hover highlight",
+        "More Actions (⋮) menu fixed — no longer closes immediately on open",
+        "Print redesigned as a dedicated popup showing only email content",
+      ],
+    },
+    {
+      version: "v0.6",
+      label: "",
+      date: "April 2026",
+      summary: "Multiple accounts, auto-fetch, smart send routing",
+      items: [
+        "Multiple POP3 / IMAP mail accounts in a single inbox",
+        "Per-account auto-fetch with configurable intervals (5 – 60 min)",
+        "Smart send-account matching: replies route through the receiving account",
+        "Inline account editing without re-entering the full password",
+        "POP3 delete-on-fetch vs keep-on-server toggle",
+        "Connection test for both incoming and outgoing servers",
+      ],
+    },
+    {
+      version: "v0.5",
+      label: "",
+      date: "March 2026",
+      summary: "Advanced search and filter panel",
+      items: [
+        "Filter panel with scope (current folder / all mail)",
+        "Date range filter: last 7 days, 30 days, 3 months, or 1 year",
+        "Toggle filters: unread only, starred only, has attachment",
+        "Search in email body toggle",
+        "Search operator hints: from:, subject:, has:attachment",
+        "Active filter count badge on the filter button",
+      ],
+    },
+    {
+      version: "v0.4",
+      label: "",
+      date: "March 2026",
+      summary: "Automation, notifications, backup, and spam tools",
+      items: [
+        "Vacation / out-of-office auto-reply with date range scheduling",
+        "Spam detection and spam folder management",
+        "Unsubscribe link detection with one-click unsubscribe prompt",
+        "Desktop and in-app notifications for new mail",
+        "Cloud backup engine with configurable provider and schedule",
+        "Trash and spam auto-purge with configurable retention period",
+      ],
+    },
+    {
+      version: "v0.3",
+      label: "",
+      date: "March 2026",
+      summary: "Interface enhancements and attachment preview",
+      items: [
+        "Dark mode across the full application",
+        "Collapsible sidebar for a wider reading area",
+        "Attachment preview: images, PDFs, spreadsheets, and archives",
+        "Print-friendly email view",
+        "Real-time activity logs panel (pop-out window supported)",
+        "Configurable email density and conversation view",
+      ],
+    },
+    {
+      version: "v0.2",
+      label: "",
+      date: "March 2026",
+      summary: "Labels, folders, and email rules",
+      items: [
+        "Custom labels with colour coding — apply multiple per email",
+        "Custom folders with drag-and-drop email organisation",
+        "Email rules engine: auto-label, move, star, or delete on arrival",
+        "Drag emails from the list to sidebar folders",
+        "Star and archive shortcuts from the email list",
+        "Sent, Drafts, Spam, Trash folder views",
+      ],
+    },
+    {
+      version: "v0.1",
+      label: "Initial release",
+      date: "March 2026",
+      summary: "Core foundation: compose, encryption, multi-user, POP3/IMAP/SMTP",
+      items: [
+        "POP3 and IMAP support for receiving mail",
+        "SMTP for sending email with CC and BCC fields",
+        "AES-256 encrypted file-based email and settings storage",
+        "Multi-user login with session management",
+        "Admin panel for user and system management",
+        "Docker, Linux, and Windows deployment support",
+        "Full compose window with expand to fullscreen",
+        "Inline reply composer embedded in the email view",
+        "Reply, Reply All, and Forward with collapsible quoted text",
+        "Auto-saving drafts while composing",
+        "Rich text formatting: bold, italic, underline, lists, and hyperlinks",
+        "HTML email rendering with DOMPurify sanitisation",
+      ],
+    },
+  ];
+
+  return (
+    <div className="p-6 space-y-6">
+      {/* Header */}
+      <div className="flex items-start gap-4">
+        <div className="w-12 h-12 rounded-xl bg-[#1a73e8] flex items-center justify-center flex-shrink-0">
+          <Mail className="w-6 h-6 text-white" />
+        </div>
+        <div>
+          <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8</p>
+          <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
+            A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
+          </p>
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* Version history */}
+      <div>
+        <div className="flex items-center gap-2 mb-3">
+          <ListChecks className="w-4 h-4 text-[#1a73e8]" />
+          <h3 className="text-sm font-semibold text-[#202124]">Version History</h3>
+        </div>
+        <div className="space-y-2">
+          {versions.map(v => {
+            const isOpen = openVersions.has(v.version);
+            return (
+              <div
+                key={v.version}
+                className={`border rounded-lg overflow-hidden transition-colors ${isOpen ? "border-[#1a73e8]/40 bg-white" : "border-[#e8eaed] bg-[#fafbfd]"}`}
+              >
+                <button
+                  className="w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-[#f1f3f4] transition-colors"
+                  onClick={() => toggleVersion(v.version)}
+                  data-testid={`version-toggle-${v.version}`}
+                >
+                  <span className={`text-xs font-mono font-semibold px-1.5 py-0.5 rounded ${isOpen ? "bg-[#1a73e8] text-white" : "bg-[#e8eaed] text-[#5f6368]"}`}>
+                    {v.version}
+                  </span>
+                  {v.label && (
+                    <span className="text-[10px] font-medium bg-[#e6f4ea] text-[#137333] px-1.5 py-0.5 rounded-full">
+                      {v.label}
+                    </span>
+                  )}
+                  <span className="text-xs text-[#5f6368] flex-shrink-0">{v.date}</span>
+                  <span className="text-xs text-[#3c4043] flex-1 ml-1 truncate">{v.summary}</span>
+                  <ChevronDown className={`w-3.5 h-3.5 text-[#5f6368] flex-shrink-0 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+                </button>
+                {isOpen && (
+                  <div className="px-4 pb-3 border-t border-[#e8eaed]">
+                    <ul className="space-y-1.5 pt-3">
+                      {v.items.map((item, i) => (
+                        <li key={i} className="flex items-start gap-2 text-xs text-[#3c4043]">
+                          <CheckCircle className="w-3 h-3 text-[#34a853] flex-shrink-0 mt-0.5" />
+                          {item}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      <Separator />
+
+      {/* Deployment info */}
+      <div className="flex items-start gap-3 bg-[#e8f0fe] rounded-lg px-4 py-3">
+        <Info className="w-4 h-4 text-[#1a73e8] flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-[#202124] space-y-0.5">
+          <p className="font-medium">Deployment</p>
+          <p className="text-[#5f6368]">LocalMail runs on Linux, Windows, and macOS. A Docker image (<span className="font-mono">jahuuk/localmail-app</span>) is available for containerised deployment with a named volume for persistent, encrypted storage.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const [activeTab, setActiveTab] = useState<
     "appearance" | "notifications" | "vacation" | "composing" |
-    "accounts" | "rules" | "labels" | "folders" |
-    "storage" | "backup" | "logs"
+    "accounts" | "add-account" | "rules" | "labels" | "folders" |
+    "storage" | "backup" | "logs" | "about"
   >("appearance");
 
   const GROUPS = [
@@ -4019,7 +4279,8 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
       label: "Email",
       items: [
         { id: "composing" as const, label: "Composing", icon: Pencil },
-        { id: "accounts" as const, label: "Accounts", icon: Mail },
+        { id: "accounts" as const, label: "My Accounts", icon: Mail },
+        { id: "add-account" as const, label: "Add Account", icon: PlusCircle },
         { id: "rules" as const, label: "Rules", icon: Shield },
       ],
     },
@@ -4036,6 +4297,7 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
         { id: "storage" as const, label: "Storage", icon: Trash2 },
         { id: "backup" as const, label: "Backup", icon: HardDrive },
         { id: "logs" as const, label: "Logs", icon: Code },
+        { id: "about" as const, label: "About", icon: Info },
       ],
     },
   ];
@@ -4083,13 +4345,15 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             {activeTab === "notifications" && <NotificationsPanel />}
             {activeTab === "vacation"      && <VacationPanel />}
             {activeTab === "composing"     && <ComposingPanel />}
-            {activeTab === "accounts"      && <AccountsSettings />}
+            {activeTab === "accounts"      && <MyAccountsPanel />}
+            {activeTab === "add-account"   && <AddAccountPanel />}
             {activeTab === "rules"         && <RulesSettings />}
             {activeTab === "labels"        && <LabelsSettings />}
             {activeTab === "folders"       && <FoldersSettings />}
             {activeTab === "storage"       && <StoragePanel />}
             {activeTab === "backup"        && <BackupSettings />}
             {activeTab === "logs"          && <LogsPanel />}
+            {activeTab === "about"         && <AboutPanel />}
           </div>
         </div>
       </DialogContent>
@@ -4109,85 +4373,37 @@ function TestResultBadge({ result }: { result: { success: boolean; message: stri
   );
 }
 
-function AccountsSettings() {
-  const [name, setName] = useState("");
-  const [email, setEmail] = useState("");
-  const [incomingProtocol, setIncomingProtocol] = useState<"pop3" | "imap">("pop3");
-  const [host, setHost] = useState("");
-  const [port, setPort] = useState("995");
-  const [username, setUsername] = useState("");
-  const [password, setPassword] = useState("");
-  const [tls, setTls] = useState(true);
-  const [deleteOnFetch, setDeleteOnFetch] = useState(false);
-  const [smtpHost, setSmtpHost] = useState("");
-  const [smtpPort, setSmtpPort] = useState("587");
-  const [smtpTls, setSmtpTls] = useState(true);
-  const [autoFetchEnabled, setAutoFetchEnabled] = useState(true);
-  const [autoFetchInterval, setAutoFetchInterval] = useState(30);
-  const [incomingTestResult, setIncomingTestResult] = useState<{ success: boolean; message: string } | null>(null);
-  const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null);
+function MyAccountsPanel() {
+  const [testingAccountIds, setTestingAccountIds] = useState<Set<string>>(new Set());
+  const [accountTestResults, setAccountTestResults] = useState<Map<string, { success: boolean; message: string }>>(new Map());
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
+  const testSavedAccount = async (account: MailAccount) => {
+    setTestingAccountIds(prev => { const s = new Set(Array.from(prev)); s.add(account.id); return s; });
+    setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.delete(account.id); return m; });
+    try {
+      const res = await apiRequest("POST", "/api/accounts/test-incoming", {
+        protocol: account.protocol || "pop3",
+        host: account.host,
+        port: account.port,
+        tls: account.tls,
+        username: account.username,
+        password: account.password,
+      });
+      const data = await res.json();
+      setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.set(account.id, data); return m; });
+    } catch (e: any) {
+      setAccountTestResults(prev => { const m = new Map(Array.from(prev)); m.set(account.id, { success: false, message: e.message || "Connection failed" }); return m; });
+    } finally {
+      setTestingAccountIds(prev => { const s = new Set(Array.from(prev)); s.delete(account.id); return s; });
+    }
+  };
+
   const accountsQuery = useQuery<MailAccount[]>({
     queryKey: ["/api/accounts"],
     refetchInterval: 30000,
-  });
-
-  const addMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/accounts", {
-        name, email, protocol: incomingProtocol, host, port: parseInt(port), username, password, tls,
-        deleteOnFetch: incomingProtocol === "pop3" ? deleteOnFetch : undefined,
-        smtpHost: smtpHost || undefined,
-        smtpPort: smtpPort ? parseInt(smtpPort) : undefined,
-        smtpTls,
-        autoFetchEnabled,
-        autoFetchInterval,
-      });
-      return res.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/accounts"] });
-      toast({ title: "Account added successfully" });
-      setName(""); setEmail(""); setHost(""); setPort("995"); setUsername(""); setPassword(""); setSmtpHost(""); setSmtpPort("587");
-      setDeleteOnFetch(false); setIncomingTestResult(null); setSmtpTestResult(null);
-      setAutoFetchEnabled(true); setAutoFetchInterval(30);
-    },
-    onError: (err: Error) => {
-      toast({ title: "Failed to add account", description: err.message, variant: "destructive" });
-    },
-  });
-
-  const testIncomingMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/accounts/test-incoming", {
-        protocol: incomingProtocol, host, port: parseInt(port), username, password, tls,
-      });
-      return res.json();
-    },
-    onSuccess: (data: { success: boolean; message: string }) => {
-      setIncomingTestResult(data);
-    },
-    onError: (err: Error) => {
-      setIncomingTestResult({ success: false, message: err.message });
-    },
-  });
-
-  const testSmtpMutation = useMutation({
-    mutationFn: async () => {
-      const res = await apiRequest("POST", "/api/accounts/test-smtp", {
-        host: smtpHost, port: parseInt(smtpPort), username, password, tls: smtpTls,
-      });
-      return res.json();
-    },
-    onSuccess: (data: { success: boolean; message: string }) => {
-      setSmtpTestResult(data);
-    },
-    onError: (err: Error) => {
-      setSmtpTestResult({ success: false, message: err.message });
-    },
   });
 
   const [editingAccountId, setEditingAccountId] = useState<string | null>(null);
@@ -4311,21 +4527,11 @@ function AccountsSettings() {
     },
   });
 
-  const handleProtocolChange = (protocol: "pop3" | "imap") => {
-    setIncomingProtocol(protocol);
-    if (protocol === "pop3") setPort("995");
-    else setPort("993");
-    setIncomingTestResult(null);
-  };
-
-  const canTestIncoming = host && port && username && password;
-  const canTestSmtp = smtpHost && smtpPort && username && password;
-
   return (
     <div className="p-6 space-y-6">
       <div>
-        <h3 className="text-base font-medium text-[#202124] mb-1">Mail Accounts</h3>
-        <p className="text-xs text-[#5f6368]">Configure your incoming and outgoing mail server connections.</p>
+        <h3 className="text-base font-medium text-[#202124] mb-1">Connected Accounts</h3>
+        <p className="text-xs text-[#5f6368]">Manage your existing incoming and outgoing mail server connections.</p>
       </div>
 
       {(accountsQuery.data?.length ?? 0) > 0 && (
@@ -4490,6 +4696,20 @@ function AccountsSettings() {
                         <RefreshCw className={`h-3 w-3 mr-1 ${fetchingAccounts.has(account.id) ? "animate-spin" : ""}`} /> Fetch
                       </Button>
                       <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => testSavedAccount(account)}
+                        disabled={testingAccountIds.has(account.id)}
+                        data-testid={`button-test-account-${account.id}`}
+                      >
+                        {testingAccountIds.has(account.id) ? (
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        ) : (
+                          <CheckCircle className="h-3 w-3 mr-1" />
+                        )}
+                        Test
+                      </Button>
+                      <Button
                         variant="ghost"
                         size="icon"
                         className="h-8 w-8 text-red-500 hover:text-red-600"
@@ -4542,6 +4762,9 @@ function AccountsSettings() {
                       )}
                     </div>
                   </div>
+                  {accountTestResults.has(account.id) && (
+                    <TestResultBadge result={accountTestResults.get(account.id)!} />
+                  )}
                 </>
               )}
             </div>
@@ -4549,11 +4772,103 @@ function AccountsSettings() {
         </div>
       )}
 
-      <Separator />
+      {(accountsQuery.data?.length ?? 0) === 0 && (
+        <div className="text-center py-12 text-[#5f6368]">
+          <Mail className="w-10 h-10 mx-auto mb-3 opacity-30" />
+          <p className="text-sm font-medium">No accounts yet</p>
+          <p className="text-xs mt-1">Go to "Add Account" to connect your first mail account.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AddAccountPanel() {
+  const [name, setName] = useState("");
+  const [email, setEmail] = useState("");
+  const [incomingProtocol, setIncomingProtocol] = useState<"pop3" | "imap">("pop3");
+  const [host, setHost] = useState("");
+  const [port, setPort] = useState("995");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [tls, setTls] = useState(true);
+  const [deleteOnFetch, setDeleteOnFetch] = useState(false);
+  const [smtpHost, setSmtpHost] = useState("");
+  const [smtpPort, setSmtpPort] = useState("587");
+  const [smtpTls, setSmtpTls] = useState(true);
+  const [autoFetchEnabled, setAutoFetchEnabled] = useState(true);
+  const [autoFetchInterval, setAutoFetchInterval] = useState(30);
+  const [incomingTestResult, setIncomingTestResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [smtpTestResult, setSmtpTestResult] = useState<{ success: boolean; message: string } | null>(null);
+
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+
+  const addMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/accounts", {
+        name, email, protocol: incomingProtocol, host, port: parseInt(port), username, password, tls,
+        deleteOnFetch: incomingProtocol === "pop3" ? deleteOnFetch : undefined,
+        smtpHost: smtpHost || undefined,
+        smtpPort: smtpPort ? parseInt(smtpPort) : undefined,
+        smtpTls,
+        autoFetchEnabled,
+        autoFetchInterval,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/accounts"] });
+      toast({ title: "Account added successfully" });
+      setName(""); setEmail(""); setHost(""); setPort("995"); setUsername(""); setPassword(""); setSmtpHost(""); setSmtpPort("587");
+      setDeleteOnFetch(false); setIncomingTestResult(null); setSmtpTestResult(null);
+      setAutoFetchEnabled(true); setAutoFetchInterval(30);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed to add account", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const testIncomingMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/accounts/test-incoming", {
+        protocol: incomingProtocol, host, port: parseInt(port), username, password, tls,
+      });
+      return res.json();
+    },
+    onSuccess: (data: { success: boolean; message: string }) => setIncomingTestResult(data),
+    onError: (err: Error) => setIncomingTestResult({ success: false, message: err.message }),
+  });
+
+  const testSmtpMutation = useMutation({
+    mutationFn: async () => {
+      const res = await apiRequest("POST", "/api/accounts/test-smtp", {
+        host: smtpHost, port: parseInt(smtpPort), username, password, tls: smtpTls,
+      });
+      return res.json();
+    },
+    onSuccess: (data: { success: boolean; message: string }) => setSmtpTestResult(data),
+    onError: (err: Error) => setSmtpTestResult({ success: false, message: err.message }),
+  });
+
+  const handleProtocolChange = (protocol: "pop3" | "imap") => {
+    setIncomingProtocol(protocol);
+    if (protocol === "pop3") setPort("995");
+    else setPort("993");
+    setIncomingTestResult(null);
+  };
+
+  const canTestIncoming = host && port && username && password;
+  const canTestSmtp = smtpHost && smtpPort && username && password;
+
+  return (
+    <div className="p-6 space-y-6">
+      <div>
+        <h3 className="text-base font-medium text-[#202124] mb-1">Add New Account</h3>
+        <p className="text-xs text-[#5f6368]">Connect an email account using POP3 or IMAP for incoming mail, and SMTP for sending.</p>
+      </div>
 
       <div className="space-y-4">
-        <h4 className="text-sm font-medium text-[#202124]">Add New Account</h4>
-
         <div className="grid grid-cols-2 gap-3">
           <div className="space-y-1.5">
             <Label className="text-xs text-[#5f6368]">Display Name</Label>
@@ -5050,6 +5365,71 @@ function VacationPanel() {
 
 // ─── Composing panel ──────────────────────────────────────────────────────────
 
+function SignatureEditor({ value, onChange }: { value: string; onChange: (html: string) => void }) {
+  const editorRef = useRef<HTMLDivElement>(null);
+  const initialised = useRef(false);
+
+  useEffect(() => {
+    if (editorRef.current && !initialised.current) {
+      editorRef.current.innerHTML = value || "";
+      initialised.current = true;
+    }
+  }, [value]);
+
+  const exec = (cmd: string, val?: string) => {
+    editorRef.current?.focus();
+    document.execCommand(cmd, false, val);
+  };
+
+  const handleLink = () => {
+    const url = prompt("Enter URL:");
+    if (url) exec("createLink", url.startsWith("http") ? url : `https://${url}`);
+  };
+
+  const handleInput = () => {
+    if (editorRef.current) onChange(editorRef.current.innerHTML);
+  };
+
+  return (
+    <div className="border border-[#dadce0] rounded-lg overflow-hidden focus-within:ring-2 focus-within:ring-[#1a73e8] focus-within:border-transparent bg-white">
+      {/* Mini toolbar */}
+      <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-[#e8eaed] bg-[#f8f9fa]">
+        <button onMouseDown={e => { e.preventDefault(); exec("bold"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Bold">
+          <Bold className="w-3.5 h-3.5" />
+        </button>
+        <button onMouseDown={e => { e.preventDefault(); exec("italic"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Italic">
+          <Italic className="w-3.5 h-3.5" />
+        </button>
+        <button onMouseDown={e => { e.preventDefault(); exec("underline"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Underline">
+          <Underline className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-px h-4 bg-[#dadce0] mx-1" />
+        <button onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Bullet list">
+          <List className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-px h-4 bg-[#dadce0] mx-1" />
+        <button onMouseDown={e => { e.preventDefault(); handleLink(); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Insert link">
+          <LinkIcon className="w-3.5 h-3.5" />
+        </button>
+        <div className="w-px h-4 bg-[#dadce0] mx-1" />
+        <button onMouseDown={e => { e.preventDefault(); if (editorRef.current) { editorRef.current.innerHTML = ""; onChange(""); } }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#9aa0a6]" title="Clear signature">
+          <X className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      {/* Editable area */}
+      <div
+        ref={editorRef}
+        contentEditable
+        suppressContentEditableWarning
+        onInput={handleInput}
+        data-testid="editor-signature"
+        data-placeholder="Best regards,&#10;Your Name"
+        className="min-h-[110px] px-3 py-2.5 text-sm text-[#202124] outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-[#9aa0a6] empty:before:whitespace-pre"
+      />
+    </div>
+  );
+}
+
 function ComposingPanel() {
   const { s, update, isPending } = useSettingsPanel();
   if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
@@ -5073,11 +5453,6 @@ function ComposingPanel() {
             Inline (below email)
           </button>
         </div>
-        <p className="text-xs text-[#9aa0a6]">
-          {(s.replyStyle || "popout") === "popout"
-            ? "Replies open in a floating window — you can read the original email while composing."
-            : "Replies expand inline below the email you're reading."}
-        </p>
       </SettingSection>
 
       <Separator />
@@ -5090,23 +5465,12 @@ function ComposingPanel() {
             </button>
           ))}
         </div>
-        <p className="text-xs text-[#9aa0a6]">
-          {(s.sendCancellation ?? 5) === 0 ? "Emails send immediately with no undo window." : `You have ${s.sendCancellation ?? 5} seconds to cancel after hitting Send.`}
-        </p>
       </SettingSection>
 
       <Separator />
 
       <SettingSection label="Email signature" description="Automatically appended to the bottom of every new email you write">
-        <textarea
-          value={s.signature || ""}
-          onChange={(e) => update({ signature: e.target.value })}
-          placeholder={"Best regards,\nYour Name"}
-          rows={5}
-          className="w-full px-3 py-2.5 text-sm border border-[#dadce0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent resize-none bg-white"
-          data-testid="textarea-signature"
-        />
-        <p className="text-xs text-[#9aa0a6]">Plain text only. Shown as-is in the compose window.</p>
+        <SignatureEditor value={s.signature || ""} onChange={(html) => update({ signature: html })} />
       </SettingSection>
     </div>
   );
