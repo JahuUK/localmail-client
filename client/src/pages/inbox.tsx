@@ -6000,11 +6000,11 @@ function BackupSettings() {
             </div>
             <div>
               <Label className="text-xs">Access Key ID</Label>
-              <Input value={s3AccessKeyId} onChange={(e) => setS3AccessKeyId(e.target.value)} placeholder="AKIAIOSFODNN7EXAMPLE" className="mt-1" data-testid="input-s3-access-key" />
+              <Input value={s3AccessKeyId} onChange={(e) => setS3AccessKeyId(e.target.value)} placeholder="AKIAIOSFODNN7EXAMPLE" autoComplete="off" className="mt-1" data-testid="input-s3-access-key" />
             </div>
             <div>
               <Label className="text-xs">Secret Access Key</Label>
-              <Input type="password" value={s3SecretAccessKey} onChange={(e) => setS3SecretAccessKey(e.target.value)} placeholder="Enter secret access key" className="mt-1" data-testid="input-s3-secret-key" />
+              <Input type="password" value={s3SecretAccessKey} onChange={(e) => setS3SecretAccessKey(e.target.value)} placeholder="Enter secret access key" autoComplete="new-password" className="mt-1" data-testid="input-s3-secret-key" />
             </div>
             <div>
               <Label className="text-xs">Path Prefix</Label>
@@ -6018,7 +6018,7 @@ function BackupSettings() {
             <h4 className="text-sm font-medium text-[#202124]">Azure Blob Storage Configuration</h4>
             <div>
               <Label className="text-xs">Connection String</Label>
-              <Input type="password" value={azureConnectionString} onChange={(e) => setAzureConnectionString(e.target.value)} placeholder="DefaultEndpointsProtocol=https;..." className="mt-1" data-testid="input-azure-connection" />
+              <Input type="password" value={azureConnectionString} onChange={(e) => setAzureConnectionString(e.target.value)} placeholder="DefaultEndpointsProtocol=https;..." autoComplete="new-password" className="mt-1" data-testid="input-azure-connection" />
             </div>
             <div>
               <Label className="text-xs">Container Name</Label>
