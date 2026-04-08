@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import ReactDOM from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import DOMPurify from "dompurify";
@@ -1396,7 +1397,10 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         )}
       </div>
 
-      <ComposePanel open={composeOpen} onClose={() => { setComposeOpen(false); setComposeDefaults(null); }} signature={settings?.signature || ""} sendCancellation={settings?.sendCancellation || 0} defaultSendAccountId={settings?.defaultSendAccountId || ""} defaults={composeDefaults} />
+      {ReactDOM.createPortal(
+        <ComposePanel open={composeOpen} onClose={() => { setComposeOpen(false); setComposeDefaults(null); }} signature={settings?.signature || ""} sendCancellation={settings?.sendCancellation || 0} defaultSendAccountId={settings?.defaultSendAccountId || ""} defaults={composeDefaults} />,
+        document.body
+      )}
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
     </div>
   );
@@ -3549,13 +3553,28 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
 
   if (!open) return null;
 
-  const panelClasses = expanded
-    ? "fixed inset-4 z-50 flex flex-col bg-white rounded-xl shadow-2xl border border-[#dadce0]"
-    : "fixed bottom-0 right-6 z-50 flex flex-col bg-white rounded-t-xl shadow-2xl border border-[#dadce0] w-[850px] h-[648px]";
+  const panelClasses = "flex flex-col bg-white shadow-2xl border border-[#dadce0]" +
+    (expanded ? " rounded-xl" : " rounded-t-xl");
+
+  const panelStyle = expanded
+    ? {
+        position: "fixed" as const,
+        inset: 16,
+        zIndex: 50,
+      }
+    : {
+        position: "fixed" as const,
+        bottom: 0,
+        right: 24,
+        zIndex: 50,
+        width: "min(600px, calc(100vw - 48px))",
+        height: "min(648px, calc(100vh - 24px))",
+      };
 
   return (
     <div
       className={`${panelClasses} relative`}
+      style={panelStyle}
       data-testid="compose-panel"
       onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
       onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setIsDragOver(false); }}
@@ -4049,7 +4068,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.1"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.2"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4062,8 +4081,19 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.1",
+      version: "v0.8.2",
       label: "Latest",
+      date: "April 2026",
+      summary: "Compose window bug fix and improvements",
+      items: [
+        "Compose window now floats correctly over the inbox on all screen sizes",
+        "Compose window enlarged for a more comfortable writing experience",
+        "Expand button now reliably fills the viewport without disappearing",
+      ],
+    },
+    {
+      version: "v0.8.1",
+      label: "",
       date: "April 2026",
       summary: "Security hardening and stability improvements",
       items: [
@@ -4200,7 +4230,7 @@ function AboutPanel() {
         </div>
         <div>
           <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
-          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.1</p>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.2</p>
           <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
             A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
           </p>
