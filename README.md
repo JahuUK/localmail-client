@@ -152,27 +152,6 @@ Settings → Backup → **Download Backup** produces a `.zip` of your entire `da
 
 Settings → Backup → Cloud Backup supports Amazon S3, Azure Blob Storage, and Google Cloud Storage. Set a schedule (daily/weekly/monthly) or trigger manually. Backup history and one-click restore are available from the same panel. All cloud credentials are encrypted at rest.
 
-### Manual backup
-
-For a full-instance backup (all users):
-
-```bash
-# Docker — export the named volume while running
-docker run --rm \
-  -v localmail_data:/data \
-  -v $(pwd):/backup \
-  alpine tar czf /backup/localmail-backup-$(date +%F).tar.gz -C /data .
-
-# Restore from that archive
-docker run --rm \
-  -v localmail_data:/data \
-  -v $(pwd):/backup \
-  alpine sh -c "cd /data && tar xzf /backup/localmail-backup-<date>.tar.gz"
-
-# Linux bare-metal — while stopped (safest)
-cp -r /opt/localmail/data /backup/localmail-$(date +%F)
-```
-
 **Critical:** Always back up your `ENCRYPTION_KEY` (or `data/.encryption-key`) separately from your data. Without it, encrypted emails and account passwords cannot be decrypted.
 
 ---
