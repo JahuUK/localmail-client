@@ -59,11 +59,11 @@ services:
     ports:
       - "5000:5000"
     volumes:
-      - localmail_data:/app/data
+      - localmail_data:/app/data ## Create your persistent volume to ensure user settings and emails remain after a restart/redeploy
     environment:
-      - ENCRYPTION_KEY=REPLACE_WITH_OUTPUT_OF__openssl_rand_-hex_32
+      - ENCRYPTION_KEY= ## REPLACE_WITH_OUTPUT_OF__openssl_rand_-hex_32
       - ADMIN_USERNAME=admin
-      - ADMIN_PASSWORD=REPLACE_WITH_A_STRONG_PASSWORD
+      - ADMIN_PASSWORD= ## REPLACE_WITH_A_STRONG_PASSWORD
     restart: unless-stopped
 
 volumes:
