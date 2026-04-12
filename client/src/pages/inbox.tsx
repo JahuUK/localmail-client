@@ -1366,6 +1366,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
               onStar={(id) => starMutation.mutate(id)}
               displayDensity={settings?.displayDensity || "default"}
               showLabels={settings?.showLabels !== false}
+              mobileShowTagRow={settings?.mobileShowTagRow !== false}
               selectedIds={selectedEmailIds}
               onToggleSelect={toggleEmailSelection}
               clockFormat={settings?.clockFormat || "12h"}
@@ -1491,6 +1492,7 @@ function EmailList({
   onStar,
   displayDensity,
   showLabels,
+  mobileShowTagRow,
   selectedIds,
   onToggleSelect,
   clockFormat,
@@ -1515,6 +1517,7 @@ function EmailList({
   onStar: (id: string) => void;
   displayDensity: "default" | "comfortable" | "compact";
   showLabels: boolean;
+  mobileShowTagRow: boolean;
   selectedIds: Set<string>;
   onToggleSelect: (id: string) => void;
   clockFormat: "12h" | "24h";
@@ -1629,83 +1632,167 @@ function EmailList({
                 setCtxMenu({ x: e.clientX, y: e.clientY, email: latestEmail });
                 setCtxSubMenu(null);
               }}
-              className={`flex items-center ${rowHeight} px-2 border-b border-[#f0f0f0] cursor-pointer group transition-colors min-w-0 overflow-hidden ${
+              className={`border-b border-[#f0f0f0] cursor-pointer group transition-colors relative ${
                 selectedIds.has(latestEmail.id) ? "bg-[#c2dbff]" : hasUnread ? "bg-white" : "bg-[#f2f2f2]"
-              } hover:shadow-[inset_1px_0_0_#dadce0,_inset_-1px_0_0_#dadce0,_0_1px_2px_0_rgba(60,64,67,.3),_0_1px_3px_1px_rgba(60,64,67,.15)] hover:z-10 relative`}
+              } hover:shadow-[inset_1px_0_0_#dadce0,_inset_-1px_0_0_#dadce0,_0_1px_2px_0_rgba(60,64,67,.3),_0_1px_3px_1px_rgba(60,64,67,.15)] hover:z-10`}
               data-testid={`email-row-${latestEmail.id}`}
             >
-              {/* Checkbox */}
-              <div className="w-10 flex-shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
-                <input type="checkbox" checked={selectedIds.has(latestEmail.id)} onChange={() => onToggleSelect(latestEmail.id)} className="w-[18px] h-[18px] accent-[#1a73e8] cursor-pointer rounded-sm" data-testid={`checkbox-email-${latestEmail.id}`} />
-              </div>
-
-              {/* Star */}
-              <button
-                onClick={(e) => { e.stopPropagation(); onStar(latestEmail.id); }}
-                className="w-8 flex-shrink-0 flex items-center justify-center"
-                title={latestEmail.isStarred ? "Starred" : "Not starred"}
-                data-testid={`button-star-${latestEmail.id}`}
-              >
-                <Star className={`h-[18px] w-[18px] ${latestEmail.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5] group-hover:text-[#5f6368]"}`} />
-              </button>
-
-              {/* Sender(s) */}
-              <div className={`w-[100px] lg:w-[140px] xl:w-[200px] flex-shrink-0 truncate text-[13px] pl-2 ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
-                <HighlightText text={senderDisplay} query={searchQuery} />
-                {conversationView && count > 1 && (
-                  <span className="ml-1 text-[11px] text-[#5f6368] font-normal">({count})</span>
-                )}
-              </div>
-
-              {/* Account tag + Subject + Labels + Snippet */}
-              <div className="flex-1 flex items-center min-w-0 gap-1 px-2 overflow-hidden">
-                {latestEmail.accountEmail && (() => {
-                  const accountLabel = labels.find(l => l.name === latestEmail.accountEmail);
-                  const tagColor = accountLabel?.color || "#1a73e8";
-                  return (
-                    <span className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: tagColor + "18", color: tagColor, borderWidth: 1, borderColor: tagColor + "40" }} data-testid={`tag-account-${latestEmail.id}`}>
-                      {latestEmail.accountEmail}
-                    </span>
-                  );
-                })()}
-                {latestEmail.sendStatus === "sending" && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fef7e0] text-[#b06000] border border-[#f5d565]" data-testid={`status-sending-${latestEmail.id}`}>Sending...</span>
-                )}
-                {latestEmail.sendStatus === "failed" && (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={latestEmail.sendError} data-testid={`status-failed-${latestEmail.id}`}>Send failed</span>
-                )}
-                {latestEmail.scheduledFor && latestEmail.folder === "scheduled" && (
-                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#e8f0fe] text-[#0b57d0] border border-[#c5d9f7]" data-testid={`status-scheduled-${latestEmail.id}`}>
-                    <Clock className="h-2.5 w-2.5" />
-                    {new Date(latestEmail.scheduledFor).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
-                  </span>
-                )}
-                <span className={`truncate text-[13px] ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
-                  <HighlightText text={latestEmail.subject || ""} query={searchQuery} />
-                </span>
-                {showLabels && latestEmail.labels && latestEmail.labels.length > 0 && latestEmail.labels.map(lId => {
-                  const lbl = getLabelById(lId);
-                  if (!lbl) return null;
-                  if (latestEmail.accountEmail && lbl.name === latestEmail.accountEmail) return null;
-                  return (
-                    <span key={lId} className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: lbl.color + "18", color: lbl.color, border: `1px solid ${lbl.color}40` }}>
-                      {lbl.name}
-                    </span>
-                  );
-                })}
-                <span className="text-[13px] text-[#5f6368] truncate font-normal">{" "}&mdash; {latestEmail.snippet}</span>
-              </div>
-
-              {/* Attachment indicator */}
-              {hasAttachments && (
-                <div className="w-5 flex-shrink-0 flex items-center justify-center" title="Has attachments">
-                  <Paperclip className="h-3.5 w-3.5 text-[#5f6368]" />
+              {/* ── MOBILE CARD (visible below md breakpoint) ── */}
+              <div className="flex md:hidden items-start px-3 py-3 gap-2.5">
+                {/* Checkbox */}
+                <div className="flex-shrink-0 pt-1" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selectedIds.has(latestEmail.id)} onChange={() => onToggleSelect(latestEmail.id)} className="w-[15px] h-[15px] accent-[#1a73e8] cursor-pointer rounded-sm" data-testid={`checkbox-email-mobile-${latestEmail.id}`} />
                 </div>
-              )}
+                {/* Content */}
+                <div className="flex-1 min-w-0 space-y-1">
+                  {/* Row 1: Sender + Date */}
+                  <div className="flex items-baseline justify-between gap-2">
+                    <span className={`text-[15px] truncate leading-snug ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#444746]"}`}>
+                      <HighlightText text={senderDisplay} query={searchQuery} />
+                      {conversationView && count > 1 && (
+                        <span className={`ml-1.5 text-[12px] font-normal ${hasUnread ? "text-[#444746]" : "text-[#9aa0a6]"}`}>{count}</span>
+                      )}
+                    </span>
+                    <span className={`text-[12px] whitespace-nowrap flex-shrink-0 ${hasUnread ? "font-semibold text-[#0b57d0]" : "text-[#9aa0a6]"}`}>
+                      {formatEmailDate(latestEmail.date, clockFormat)}
+                    </span>
+                  </div>
+                  {/* Row 2: Subject */}
+                  <div className={`text-[13.5px] truncate leading-snug ${hasUnread ? "font-semibold text-[#202124]" : "font-normal text-[#3c4043]"}`}>
+                    {latestEmail.scheduledFor && latestEmail.folder === "scheduled" && (
+                      <span className="inline-flex items-center gap-1 mr-1.5 px-1.5 py-0 rounded text-[10px] font-medium bg-[#e8f0fe] text-[#0b57d0] border border-[#c5d9f7]">
+                        <Clock className="h-2.5 w-2.5" />
+                        {new Date(latestEmail.scheduledFor).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                      </span>
+                    )}
+                    {latestEmail.sendStatus === "failed" && (
+                      <span className="inline-flex items-center mr-1.5 px-1.5 py-0 rounded text-[10px] font-medium bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]">Send failed</span>
+                    )}
+                    <HighlightText text={latestEmail.subject || "(no subject)"} query={searchQuery} />
+                  </div>
+                  {/* Row 3: Snippet (standalone full-width line) */}
+                  <div className="text-[12.5px] text-[#9aa0a6] truncate leading-snug flex items-center gap-1.5">
+                    <HighlightText text={latestEmail.snippet || ""} query={searchQuery} />
+                    {hasAttachments && <Paperclip className="h-3 w-3 flex-shrink-0" />}
+                  </div>
+                  {/* Row 4: Labels / account tag + Star (shown only when mobileShowTagRow is on) */}
+                  {mobileShowTagRow && (
+                  <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                    {/* Account inbox pill — always shown, identifies which account received this */}
+                    {latestEmail.accountEmail && (() => {
+                      const accountLabel = labels.find(l => l.name === latestEmail.accountEmail);
+                      const tagColor = accountLabel?.color || "#1a73e8";
+                      return (
+                        <span
+                          className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 text-white"
+                          style={{ backgroundColor: tagColor }}
+                          title={latestEmail.accountEmail}
+                          data-testid={`account-tag-mobile-${latestEmail.id}`}
+                        >
+                          {latestEmail.accountEmail}
+                        </span>
+                      );
+                    })()}
+                    {/* User label pills */}
+                    {showLabels && latestEmail.labels && latestEmail.labels.map(lId => {
+                      const lbl = getLabelById(lId);
+                      if (!lbl) return null;
+                      if (latestEmail.accountEmail && lbl.name === latestEmail.accountEmail) return null;
+                      return (
+                        <span key={lId} className="inline-flex items-center px-2.5 py-1 rounded-full text-[11px] font-semibold flex-shrink-0 text-white" style={{ backgroundColor: lbl.color }} data-testid={`label-pill-${latestEmail.id}-${lId}`}>
+                          {lbl.name}
+                        </span>
+                      );
+                    })}
+                    {/* Star pushed to the right */}
+                    <button
+                      onClick={(e) => { e.stopPropagation(); onStar(latestEmail.id); }}
+                      className="flex-shrink-0 ml-auto"
+                      title={latestEmail.isStarred ? "Starred" : "Not starred"}
+                      data-testid={`button-star-mobile-${latestEmail.id}`}
+                    >
+                      <Star className={`h-[18px] w-[18px] ${latestEmail.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5]"}`} />
+                    </button>
+                  </div>
+                  )}
+                </div>
+              </div>
 
-              {/* Date */}
-              <div className={`w-[75px] flex-shrink-0 text-right text-[12px] pr-2 xl:pr-4 whitespace-nowrap ${hasUnread ? "font-bold text-[#202124]" : "text-[#5f6368]"}`}>
-                {formatEmailDate(latestEmail.date, clockFormat)}
+              {/* ── DESKTOP ROW (visible at md and above) ── */}
+              <div className={`hidden md:flex items-center ${rowHeight} px-2 min-w-0 overflow-hidden`}>
+                {/* Checkbox */}
+                <div className="w-10 flex-shrink-0 flex items-center justify-center" onClick={(e) => e.stopPropagation()}>
+                  <input type="checkbox" checked={selectedIds.has(latestEmail.id)} onChange={() => onToggleSelect(latestEmail.id)} className="w-[18px] h-[18px] accent-[#1a73e8] cursor-pointer rounded-sm" data-testid={`checkbox-email-${latestEmail.id}`} />
+                </div>
+
+                {/* Star */}
+                <button
+                  onClick={(e) => { e.stopPropagation(); onStar(latestEmail.id); }}
+                  className="w-8 flex-shrink-0 flex items-center justify-center"
+                  title={latestEmail.isStarred ? "Starred" : "Not starred"}
+                  data-testid={`button-star-${latestEmail.id}`}
+                >
+                  <Star className={`h-[18px] w-[18px] ${latestEmail.isStarred ? "fill-[#f4b400] text-[#f4b400]" : "text-[#c4c7c5] group-hover:text-[#5f6368]"}`} />
+                </button>
+
+                {/* Sender(s) */}
+                <div className={`w-[100px] lg:w-[140px] xl:w-[200px] flex-shrink-0 truncate text-[13px] pl-2 ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
+                  <HighlightText text={senderDisplay} query={searchQuery} />
+                  {conversationView && count > 1 && (
+                    <span className="ml-1 text-[11px] text-[#5f6368] font-normal">({count})</span>
+                  )}
+                </div>
+
+                {/* Account tag + Subject + Labels + Snippet */}
+                <div className="flex-1 flex items-center min-w-0 gap-1 px-2 overflow-hidden">
+                  {latestEmail.accountEmail && (() => {
+                    const accountLabel = labels.find(l => l.name === latestEmail.accountEmail);
+                    const tagColor = accountLabel?.color || "#1a73e8";
+                    return (
+                      <span className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: tagColor + "18", color: tagColor, borderWidth: 1, borderColor: tagColor + "40" }} data-testid={`tag-account-${latestEmail.id}`}>
+                        {latestEmail.accountEmail}
+                      </span>
+                    );
+                  })()}
+                  {latestEmail.sendStatus === "sending" && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fef7e0] text-[#b06000] border border-[#f5d565]" data-testid={`status-sending-${latestEmail.id}`}>Sending...</span>
+                  )}
+                  {latestEmail.sendStatus === "failed" && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={latestEmail.sendError} data-testid={`status-failed-${latestEmail.id}`}>Send failed</span>
+                  )}
+                  {latestEmail.scheduledFor && latestEmail.folder === "scheduled" && (
+                    <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#e8f0fe] text-[#0b57d0] border border-[#c5d9f7]" data-testid={`status-scheduled-${latestEmail.id}`}>
+                      <Clock className="h-2.5 w-2.5" />
+                      {new Date(latestEmail.scheduledFor).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                    </span>
+                  )}
+                  <span className={`truncate text-[13px] ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
+                    <HighlightText text={latestEmail.subject || ""} query={searchQuery} />
+                  </span>
+                  {showLabels && latestEmail.labels && latestEmail.labels.length > 0 && latestEmail.labels.map(lId => {
+                    const lbl = getLabelById(lId);
+                    if (!lbl) return null;
+                    if (latestEmail.accountEmail && lbl.name === latestEmail.accountEmail) return null;
+                    return (
+                      <span key={lId} className="inline-flex items-center px-1.5 py-0 rounded text-[11px] font-medium flex-shrink-0" style={{ backgroundColor: lbl.color + "18", color: lbl.color, border: `1px solid ${lbl.color}40` }}>
+                        {lbl.name}
+                      </span>
+                    );
+                  })}
+                  <span className="text-[13px] text-[#5f6368] truncate font-normal">{" "}&mdash; {latestEmail.snippet}</span>
+                </div>
+
+                {/* Attachment indicator */}
+                {hasAttachments && (
+                  <div className="w-5 flex-shrink-0 flex items-center justify-center" title="Has attachments">
+                    <Paperclip className="h-3.5 w-3.5 text-[#5f6368]" />
+                  </div>
+                )}
+
+                {/* Date */}
+                <div className={`w-[75px] flex-shrink-0 text-right text-[12px] pr-2 xl:pr-4 whitespace-nowrap ${hasUnread ? "font-bold text-[#202124]" : "text-[#5f6368]"}`}>
+                  {formatEmailDate(latestEmail.date, clockFormat)}
+                </div>
               </div>
             </div>
           );
@@ -5487,6 +5574,16 @@ function AppearancePanel() {
           <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.showLabels ? "left-6" : "left-1"}`} />
         </button>
       </SettingRow>
+
+      <Separator />
+
+      <SettingSection label="Mobile view" description="Options that only affect how emails appear on small screens">
+        <SettingRow label="Show inbox tag row" description="Display the coloured account and label pills at the bottom of each email card on mobile">
+          <button onClick={() => update({ mobileShowTagRow: !(s.mobileShowTagRow !== false) })} className={TOGGLE(s.mobileShowTagRow !== false)} data-testid="toggle-mobile-tag-row">
+            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.mobileShowTagRow !== false ? "left-6" : "left-1"}`} />
+          </button>
+        </SettingRow>
+      </SettingSection>
     </div>
   );
 }

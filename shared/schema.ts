@@ -111,6 +111,7 @@ export const generalSettingsSchema = z.object({
   emailsPerPage: z.number().default(20),
   clockFormat: z.enum(["12h", "24h"]).default("12h"),
   darkMode: z.boolean().default(false),
+  mobileShowTagRow: z.boolean().default(true),
   vacationReplyEnabled: z.boolean().default(false),
   vacationSubject: z.string().default(""),
   vacationBody: z.string().default(""),

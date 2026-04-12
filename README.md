@@ -23,6 +23,7 @@ A self-hosted, Gmail-inspired email client. Connect your existing email accounts
 - **Activity logs** — Built-in log viewer for fetch, send, backup, and error events
 - **Export and print** — Download any email as a .eml file or print with a clean layout
 - **Attachment previews** — Images with lightbox, inline PDF viewer, standard download for other types
+- **Mobile View** - Mobile device view available similar for mobile devices that can connect to the container (via. VPN or otherwise)
 
 ![MainUI](https://github.com/JahuUK/localmail-client/blob/main/readmescreenshots/image2.png?raw=true)
 
@@ -38,8 +39,6 @@ A self-hosted, Gmail-inspired email client. Connect your existing email accounts
 - Cloud backup credentials **encrypted at rest**
 - Deleted message IDs tracked to prevent re-import after permanent deletion
 - Session-based authentication; sessions invalidated on logout
-
-
 
 ---
 

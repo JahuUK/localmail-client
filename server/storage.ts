@@ -182,6 +182,7 @@ export class UserStorage {
       defaultSendAccountId: "",
       emailsPerPage: 20,
       darkMode: false,
+      mobileShowTagRow: true,
     };
 
     const emailsDir = userEmailsDir(userId);
