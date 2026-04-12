@@ -676,7 +676,7 @@ export async function registerRoutes(
     const parsed = composeEmailSchema.safeParse(req.body);
     if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
 
-    const { to, subject, body, accountId, cc, bcc, inReplyTo, references, attachments: composeAttachments } = parsed.data;
+    const { to, subject, body, accountId, cc, bcc, inReplyTo, references, attachments: composeAttachments, scheduledFor } = parsed.data;
     let senderEmail = "me@localmail.app";
     let senderName = "Me";
     let account: any = null;
@@ -692,6 +692,7 @@ export async function registerRoutes(
     const ccRecipients = cc ? cc.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ name: e, email: e })) : [];
     const bccRecipients = bcc ? bcc.split(",").map(e => e.trim()).filter(Boolean).map(e => ({ name: e, email: e })) : [];
 
+    const isScheduled = !!scheduledFor;
     const isHtmlBody = /<[a-z][\s\S]*>/i.test(body);
     const email = await storage.createEmail({
       sender: { name: senderName, email: senderEmail },
@@ -705,15 +706,18 @@ export async function registerRoutes(
       date: new Date().toISOString(),
       isUnread: false,
       isStarred: false,
-      folder: "sent",
+      folder: isScheduled ? "scheduled" : "sent",
       labels: [],
       accountEmail: accountId ? senderEmail : undefined,
-      sendStatus: account ? "sending" : undefined,
+      sendStatus: (!isScheduled && account) ? "sending" : undefined,
+      scheduledFor: isScheduled ? new Date(scheduledFor).toISOString() : undefined,
     });
 
     res.json(email);
 
-    if (account) {
+    if (isScheduled) {
+      addLog(userId, "info", "Compose", `Email to ${to} scheduled for ${scheduledFor}`);
+    } else if (account) {
       addLog(userId, "info", "SMTP send", `Sending email to ${to} via ${account.email}...`);
       sendSmtpEmail(account, to, subject, body, cc, bcc, { inReplyTo, references, attachments: composeAttachments })
         .then(async () => {
@@ -727,6 +731,15 @@ export async function registerRoutes(
     } else {
       addLog(userId, "info", "Compose", `Email composed to ${to} (local only, no SMTP account)`);
     }
+  });
+
+  app.patch("/api/emails/:id/cancel-scheduled", requireAuth, async (req, res) => {
+    const storage = getUserStorage(req);
+    const email = await storage.getEmail(req.params.id);
+    if (!email) return res.status(404).json({ message: "Email not found" });
+    if (email.folder !== "scheduled") return res.status(400).json({ message: "Email is not scheduled" });
+    await storage.updateEmail(email.id, { folder: "drafts", scheduledFor: undefined });
+    res.json({ message: "Schedule cancelled, moved to Drafts" });
   });
 
   app.post("/api/emails/:id/unsubscribe", requireAuth, async (req, res) => {
@@ -1350,10 +1363,47 @@ export async function registerRoutes(
     res.json(result);
   });
 
+  function startScheduledEmailProcessor() {
+    setInterval(async () => {
+      const now = new Date().toISOString();
+      const allStorages = globalStorage.getAllActiveStorages();
+      for (const storage of allStorages) {
+        try {
+          const scheduled = await storage.getEmails("scheduled");
+          const due = scheduled.filter(e => e.scheduledFor && e.scheduledFor <= now);
+          for (const email of due) {
+            if (!email.accountEmail) {
+              await storage.updateEmail(email.id, { folder: "sent", scheduledFor: undefined });
+              continue;
+            }
+            const accounts = await storage.getAccounts();
+            const account = accounts.find(a => a.email === email.accountEmail);
+            if (!account) {
+              await storage.updateEmail(email.id, { folder: "sent", scheduledFor: undefined });
+              continue;
+            }
+            await storage.updateEmail(email.id, { sendStatus: "sending" });
+            const toStr = email.to.map(t => t.email).join(", ");
+            const ccStr = email.cc?.map(t => t.email).join(", ");
+            const bccStr = email.bcc?.map(t => t.email).join(", ");
+            sendSmtpEmail(account, toStr, email.subject, email.body, ccStr, bccStr)
+              .then(async () => {
+                await storage.updateEmail(email.id, { folder: "sent", scheduledFor: undefined, sendStatus: "sent" });
+              })
+              .catch(async (err: any) => {
+                await storage.updateEmail(email.id, { folder: "sent", scheduledFor: undefined, sendStatus: "failed", sendError: err.message });
+              });
+          }
+        } catch (_) {}
+      }
+    }, 60000);
+  }
+
   setTimeout(() => {
     initAutoFetchForAllUsers();
     startTrashPurgeTimer();
     initScheduledBackups();
+    startScheduledEmailProcessor();
   }, 2000);
 
   return httpServer;

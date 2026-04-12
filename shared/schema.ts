@@ -58,6 +58,7 @@ export const emailSchema = z.object({
   messageId: z.string().optional(),
   sendStatus: z.enum(["sending", "sent", "failed"]).optional(),
   sendError: z.string().optional(),
+  scheduledFor: z.string().optional(),
 });
 
 export type Email = z.infer<typeof emailSchema>;
@@ -167,6 +168,7 @@ export const composeEmailSchema = z.object({
   references: z.string().optional(),
   replyToId: z.string().optional(),
   attachments: z.array(composeAttachmentSchema).optional(),
+  scheduledFor: z.string().optional(),
 });
 export type ComposeEmail = z.infer<typeof composeEmailSchema>;
 

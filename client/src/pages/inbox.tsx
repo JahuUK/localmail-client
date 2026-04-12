@@ -104,6 +104,7 @@ const FOLDERS = [
   { id: "sent", label: "Sent", icon: Send },
   { id: "trash", label: "Trash", icon: Trash2 },
   { id: "drafts", label: "Drafts", icon: FileText },
+  { id: "scheduled", label: "Scheduled", icon: Clock },
   { id: "all", label: "All Mail", icon: Mail },
   { id: "archive", label: "Archive", icon: Archive },
   { id: "spam", label: "Spam", icon: AlertCircle },
@@ -111,6 +112,15 @@ const FOLDERS = [
 
 function normalizeSubject(subject: string): string {
   return (subject || "").replace(/^(Re|Fwd?|RE|FW?)(\[\d+\])?:\s*/gi, "").trim().toLowerCase();
+}
+
+const AVATAR_COLORS = ["#1a73e8", "#34a853", "#ea4335", "#fbbc04", "#0f9d58", "#ab47bc", "#00acc1", "#e64a19", "#7cb342", "#039be5"];
+function getAvatarColor(emailAddr: string): string {
+  let hash = 0;
+  for (let i = 0; i < emailAddr.length; i++) {
+    hash = (hash * 31 + emailAddr.charCodeAt(i)) & 0x7fffffff;
+  }
+  return AVATAR_COLORS[hash % AVATAR_COLORS.length];
 }
 
 function formatEmailDate(dateStr: string, clockFormat: "12h" | "24h" = "12h") {
@@ -143,6 +153,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [selectMenuOpen, setSelectMenuOpen] = useState(false);
   const [moveMenuOpen, setMoveMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [filterPanelOpen, setFilterPanelOpen] = useState(false);
   const [filterScope, setFilterScope] = useState<"current" | "all">("current");
@@ -673,6 +684,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailIds(new Set());
     resetSearchAndFilters();
     setCurrentPage(1);
+    setMobileSidebarOpen(false);
   };
 
   const handleLabelClick = (labelId: string) => {
@@ -684,6 +696,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailIds(new Set());
     resetSearchAndFilters();
     setCurrentPage(1);
+    setMobileSidebarOpen(false);
   };
 
   const handleAccountClick = (accountEmail: string) => {
@@ -695,6 +708,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     setSelectedEmailIds(new Set());
     resetSearchAndFilters();
     setCurrentPage(1);
+    setMobileSidebarOpen(false);
   };
 
   useEffect(() => {
@@ -730,8 +744,20 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
 
   return (
     <div className="flex h-screen w-full max-w-full overflow-hidden bg-[#f6f8fc]" onDragEnd={() => setDragOverFolder(null)}>
+      {/* Mobile sidebar backdrop */}
+      {mobileSidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/40 z-30 md:hidden"
+          onClick={() => setMobileSidebarOpen(false)}
+        />
+      )}
       {/* Gmail-style Sidebar */}
-      <div className={`${sidebarCollapsed ? "w-[68px]" : "w-[256px]"} flex-shrink-0 flex flex-col h-full pt-2 pl-2 transition-all duration-200`}>
+      <div className={`flex-shrink-0 flex flex-col h-full pt-2 pl-2 bg-[#f6f8fc] dark:bg-[#1f1f1f]
+        fixed md:static inset-y-0 left-0 z-40 md:z-auto
+        ${sidebarCollapsed ? "w-[280px] md:w-[68px]" : "w-[280px] md:w-[256px]"}
+        transition-transform duration-300
+        ${mobileSidebarOpen ? "translate-x-0" : "-translate-x-full md:translate-x-0"}
+      `}>
         {/* Branding Header */}
         <div className={`flex items-center ${sidebarCollapsed ? "px-1" : "px-3"} h-12 mb-1`}>
           <button
@@ -986,10 +1012,19 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 min-w-0 flex flex-col h-full mr-2 my-2 rounded-2xl bg-white overflow-hidden shadow-sm">
+      <div className="flex-1 min-w-0 flex flex-col h-full md:mr-2 md:my-2 md:rounded-2xl bg-white overflow-hidden shadow-sm">
         {/* Top Search Bar */}
         <header className="flex flex-col">
           <div className="h-14 flex items-center px-2 gap-2">
+            {/* Mobile hamburger — visible only on small screens when sidebar is hidden */}
+            <button
+              className="md:hidden flex-shrink-0 p-2 rounded-full hover:bg-[#f1f3f4] transition-colors"
+              onClick={() => setMobileSidebarOpen(true)}
+              aria-label="Open menu"
+              data-testid="button-mobile-menu"
+            >
+              <Menu className="h-5 w-5 text-[#5f6368]" />
+            </button>
             {selectedEmail && (
               <Button variant="ghost" size="icon" className="h-10 w-10 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={handleBack} title="Back to list" data-testid="button-back">
                 <ArrowLeft className="h-5 w-5 text-[#444746]" />
@@ -1397,6 +1432,34 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
         )}
       </div>
 
+      {/* Mobile bottom navigation bar */}
+      <nav className="fixed bottom-0 left-0 right-0 h-14 bg-white dark:bg-[#2d2e30] border-t border-[#e0e0e0] dark:border-[#3c4043] flex items-center justify-around px-1 z-20 md:hidden" aria-label="Mobile navigation">
+        {[
+          { folder: "inbox", Icon: InboxIcon, label: "Inbox" },
+          { folder: "starred", Icon: Star, label: "Starred" },
+          { folder: "sent", Icon: Send, label: "Sent" },
+          { folder: "drafts", Icon: FileText, label: "Drafts" },
+        ].map(({ folder, Icon, label }) => (
+          <button
+            key={folder}
+            onClick={() => handleFolderClick(folder)}
+            className={`flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors ${activeFolder === folder && !activeLabel && !activeAccount ? "text-[#0b57d0]" : "text-[#5f6368]"}`}
+            data-testid={`mobile-nav-${folder}`}
+          >
+            <Icon className="h-5 w-5" />
+            <span className="text-[10px] font-medium">{label}</span>
+          </button>
+        ))}
+        <button
+          onClick={() => setMobileSidebarOpen(true)}
+          className="flex flex-col items-center gap-0.5 px-3 py-1.5 rounded-xl transition-colors text-[#5f6368]"
+          data-testid="mobile-nav-more"
+        >
+          <Menu className="h-5 w-5" />
+          <span className="text-[10px] font-medium">More</span>
+        </button>
+      </nav>
+
       {ReactDOM.createPortal(
         <ComposePanel open={composeOpen} onClose={() => { setComposeOpen(false); setComposeDefaults(null); }} signature={settings?.signature || ""} sendCancellation={settings?.sendCancellation || 0} defaultSendAccountId={settings?.defaultSendAccountId || ""} defaults={composeDefaults} />,
         document.body
@@ -1611,6 +1674,12 @@ function EmailList({
                 {latestEmail.sendStatus === "failed" && (
                   <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#fce8e6] text-[#c5221f] border border-[#f5c6c2]" title={latestEmail.sendError} data-testid={`status-failed-${latestEmail.id}`}>Send failed</span>
                 )}
+                {latestEmail.scheduledFor && latestEmail.folder === "scheduled" && (
+                  <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-[#e8f0fe] text-[#0b57d0] border border-[#c5d9f7]" data-testid={`status-scheduled-${latestEmail.id}`}>
+                    <Clock className="h-2.5 w-2.5" />
+                    {new Date(latestEmail.scheduledFor).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+                  </span>
+                )}
                 <span className={`truncate text-[13px] ${hasUnread ? "font-bold text-[#202124]" : "font-normal text-[#5f6368]"}`}>
                   <HighlightText text={latestEmail.subject || ""} query={searchQuery} />
                 </span>
@@ -1784,7 +1853,7 @@ function ThreadEmailCard({
         onClick={onToggle}
         data-testid={`thread-card-${email.id}`}
       >
-        <div className="w-8 h-8 rounded-full bg-[#1a73e8] text-white flex items-center justify-center text-sm font-bold flex-shrink-0">
+        <div className="w-8 h-8 rounded-full text-white flex items-center justify-center text-sm font-bold flex-shrink-0" style={{ backgroundColor: getAvatarColor(email.sender.email) }}>
           {(email.sender.name || email.sender.email).charAt(0).toUpperCase()}
         </div>
         <div className="flex-1 min-w-0">
@@ -1965,7 +2034,7 @@ function ThreadView({
       </div>
 
       {/* Email cards */}
-      <div className="flex-1 overflow-y-auto px-4 lg:px-8 py-4 space-y-2" data-testid="thread-email-list">
+      <div className="flex-1 overflow-y-auto px-4 lg:px-8 pt-4 pb-16 space-y-2" data-testid="thread-email-list">
         {sorted.map(email => (
           <ThreadEmailCard
             key={email.id}
@@ -2482,6 +2551,31 @@ function EmailView({
             </Button>
           </div>
 
+          {fullEmail.scheduledFor && fullEmail.folder === "scheduled" && (
+            <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-[#e8f0fe] border border-[#c5d9f7] text-sm text-[#0b57d0]" data-testid="banner-scheduled">
+              <Clock className="h-4 w-4 flex-shrink-0" />
+              <span className="flex-1">
+                Scheduled to send {new Date(fullEmail.scheduledFor).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-7 border-[#0b57d0] text-[#0b57d0] hover:bg-[#0b57d0] hover:text-white"
+                onClick={async () => {
+                  try {
+                    await apiRequest("PATCH", `/api/emails/${email.id}/cancel-scheduled`);
+                    queryClient.invalidateQueries();
+                    toast({ title: "Schedule cancelled", description: "Moved to Drafts" });
+                  } catch (err: any) {
+                    toast({ title: "Cancel failed", description: err.message, variant: "destructive" });
+                  }
+                }}
+                data-testid="button-cancel-scheduled"
+              >
+                Cancel
+              </Button>
+            </div>
+          )}
           {fullEmail.sendStatus === "sending" && (
             <div className="flex items-center gap-2 mb-4 px-3 py-2 rounded-lg bg-[#fef7e0] border border-[#f5d565] text-sm text-[#b06000]" data-testid="banner-sending">
               <div className="w-3 h-3 border-2 border-[#b06000] border-t-transparent rounded-full animate-spin flex-shrink-0" />
@@ -3241,6 +3335,8 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  const [scheduledFor, setScheduledFor] = useState<string>("");
+  const [showScheduleMenu, setShowScheduleMenu] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
 
@@ -3385,6 +3481,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     setDraftId(null); draftIdRef.current = null; setExpanded(false);
     setInReplyTo(undefined); setReferences(undefined);
     setContactSuggestions([]); setActiveContactField(null); setContactQuery("");
+    setScheduledFor(""); setShowScheduleMenu(false);
     if (editorRef.current) editorRef.current.innerHTML = signature ? `<br><br>${signature}` : "";
   };
 
@@ -3532,6 +3629,43 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     fireAndForgetSend();
     cleanupDraft();
     toast({ title: "Message sent" });
+    resetForm();
+    onClose();
+  };
+
+  const handleScheduleSend = () => {
+    if (!scheduledFor) return;
+    const draftToDelete = draftIdRef.current;
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    if (draftToDelete) {
+      fetch(`/api/drafts/${draftToDelete}`, { method: "DELETE", credentials: "include" }).catch(() => {});
+    }
+    const payload = {
+      to, cc: cc || undefined, bcc: bcc || undefined, subject, body,
+      accountId: selectedAccountId || undefined,
+      inReplyTo: inReplyTo || undefined,
+      references: references || undefined,
+      scheduledFor,
+      attachments: attachments.length > 0 ? attachments.map(a => ({ name: a.name, size: a.size, type: a.type, dataUrl: a.dataUrl })) : undefined,
+    };
+    fetch("/api/emails/compose", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload),
+    }).then(async (res) => {
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ message: "Schedule failed" }));
+        toast({ title: "Schedule failed", description: err.message, variant: "destructive" });
+        return;
+      }
+      queryClient.invalidateQueries();
+    }).catch(() => {
+      toast({ title: "Schedule failed", description: "Network error", variant: "destructive" });
+    });
+    const d = new Date(scheduledFor);
+    const label = d.toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+    toast({ title: "Email scheduled", description: `Will send ${label}` });
     resetForm();
     onClose();
   };
@@ -3769,6 +3903,52 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           >
             Send
           </Button>
+
+          {/* Schedule send */}
+          <div className="relative">
+            <button
+              onClick={() => setShowScheduleMenu(!showScheduleMenu)}
+              className="p-2 rounded-full hover:bg-[#f1f3f4] text-[#5f6368] transition-colors"
+              title="Schedule send"
+              data-testid="button-schedule-send"
+            >
+              <Clock className="h-4 w-4" />
+            </button>
+            {showScheduleMenu && (
+              <div className="absolute bottom-full left-0 mb-2 bg-white border border-[#dadce0] rounded-xl shadow-xl p-3 w-64 z-10" data-testid="schedule-menu">
+                <div className="text-sm font-medium text-[#202124] mb-2">Schedule send</div>
+                <input
+                  type="datetime-local"
+                  className="w-full text-sm border border-[#dadce0] rounded-lg px-3 py-2 focus:outline-none focus:border-[#0b57d0] bg-white"
+                  value={scheduledFor}
+                  min={new Date(Date.now() + 60000).toISOString().slice(0, 16)}
+                  onChange={e => setScheduledFor(e.target.value)}
+                  data-testid="input-schedule-time"
+                />
+                {scheduledFor && (
+                  <div className="mt-2 flex gap-2">
+                    <Button
+                      onClick={handleScheduleSend}
+                      disabled={!to || !subject}
+                      className="flex-1 rounded-full h-8 text-xs"
+                      style={{ backgroundColor: "#0b57d0" }}
+                      data-testid="button-confirm-schedule"
+                    >
+                      Schedule send
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      onClick={() => { setScheduledFor(""); setShowScheduleMenu(false); }}
+                      className="h-8 px-3 text-xs rounded-full"
+                      data-testid="button-cancel-schedule"
+                    >
+                      Cancel
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
@@ -4319,6 +4499,7 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     "accounts" | "add-account" | "rules" | "labels" | "folders" |
     "storage" | "backup" | "logs" | "about"
   >("appearance");
+  const [mobileShowContent, setMobileShowContent] = useState(false);
 
   const GROUPS = [
     {
@@ -4356,13 +4537,17 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     },
   ];
 
+  const allItems = GROUPS.flatMap(g => g.items);
+  const activeLabel = allItems.find(i => i.id === activeTab)?.label ?? "Settings";
+
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[1060px] h-[90vh] p-0 gap-0 overflow-hidden" aria-describedby={undefined}>
+    <Dialog open={open} onOpenChange={(v) => { onOpenChange(v); if (!v) setMobileShowContent(false); }}>
+      <DialogContent className="max-w-full sm:max-w-[1060px] h-[100dvh] sm:h-[90vh] p-0 gap-0 rounded-none sm:rounded-lg flex flex-col" aria-describedby={undefined}>
         <DialogTitle className="sr-only">Settings</DialogTitle>
-        <div className="flex h-full overflow-hidden">
-          {/* Sidebar */}
-          <div className="w-[220px] border-r border-[#e0e0e0] bg-[#f6f8fc] flex flex-col overflow-y-auto flex-shrink-0">
+        <div className="flex flex-1 min-h-0">
+
+          {/* Sidebar — always visible on desktop; on mobile shown only when !mobileShowContent */}
+          <div className={`${mobileShowContent ? "hidden" : "flex"} md:flex w-full md:w-[220px] border-r border-[#e0e0e0] bg-[#f6f8fc] flex-col flex-shrink-0 overflow-y-auto`}>
             <div className="px-5 py-4 flex items-center gap-2.5 border-b border-[#e0e0e0]">
               <Settings className="h-5 w-5 text-[#1a73e8]" />
               <span className="text-base font-semibold text-[#202124]">Settings</span>
@@ -4376,8 +4561,8 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
                   {group.items.map(item => (
                     <button
                       key={item.id}
-                      onClick={() => setActiveTab(item.id)}
-                      className={`w-full flex items-center gap-3 px-5 py-2.5 text-sm transition-colors text-left rounded-none ${
+                      onClick={() => { setActiveTab(item.id); setMobileShowContent(true); }}
+                      className={`w-full flex items-center gap-3 px-5 py-3 md:py-2.5 text-sm transition-colors text-left rounded-none ${
                         activeTab === item.id
                           ? "bg-[#d3e3fd] text-[#001d35] font-medium"
                           : "text-[#444746] hover:bg-[#e8eaed]/70"
@@ -4385,7 +4570,8 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
                       data-testid={`tab-settings-${item.id}`}
                     >
                       <item.icon className="w-4 h-4 flex-shrink-0" />
-                      {item.label}
+                      <span className="flex-1">{item.label}</span>
+                      <ChevronRight className="w-4 h-4 text-[#9aa0a6] md:hidden" />
                     </button>
                   ))}
                 </div>
@@ -4393,22 +4579,37 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
             </nav>
           </div>
 
-          {/* Content area */}
-          <div className="flex-1 overflow-y-auto min-h-0 bg-white">
-            {activeTab === "appearance"    && <AppearancePanel />}
-            {activeTab === "notifications" && <NotificationsPanel />}
-            {activeTab === "vacation"      && <VacationPanel />}
-            {activeTab === "composing"     && <ComposingPanel />}
-            {activeTab === "accounts"      && <MyAccountsPanel />}
-            {activeTab === "add-account"   && <AddAccountPanel />}
-            {activeTab === "rules"         && <RulesSettings />}
-            {activeTab === "labels"        && <LabelsSettings />}
-            {activeTab === "folders"       && <FoldersSettings />}
-            {activeTab === "storage"       && <StoragePanel />}
-            {activeTab === "backup"        && <BackupSettings />}
-            {activeTab === "logs"          && <LogsPanel />}
-            {activeTab === "about"         && <AboutPanel />}
+          {/* Content area — always visible on desktop; on mobile shown only when mobileShowContent */}
+          <div className={`${mobileShowContent ? "flex" : "hidden"} md:flex flex-1 flex-col min-h-0 bg-white`}>
+            {/* Mobile back header */}
+            <div className="flex items-center gap-2 px-4 py-3 border-b border-[#e0e0e0] md:hidden flex-shrink-0">
+              <button
+                onClick={() => setMobileShowContent(false)}
+                className="p-1.5 rounded-full hover:bg-[#f1f3f4] transition-colors -ml-1"
+                aria-label="Back to settings list"
+                data-testid="button-settings-back"
+              >
+                <ArrowLeft className="h-5 w-5 text-[#5f6368]" />
+              </button>
+              <span className="text-base font-semibold text-[#202124]">{activeLabel}</span>
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto overscroll-contain">
+              {activeTab === "appearance"    && <AppearancePanel />}
+              {activeTab === "notifications" && <NotificationsPanel />}
+              {activeTab === "vacation"      && <VacationPanel />}
+              {activeTab === "composing"     && <ComposingPanel />}
+              {activeTab === "accounts"      && <MyAccountsPanel />}
+              {activeTab === "add-account"   && <AddAccountPanel />}
+              {activeTab === "rules"         && <RulesSettings />}
+              {activeTab === "labels"        && <LabelsSettings />}
+              {activeTab === "folders"       && <FoldersSettings />}
+              {activeTab === "storage"       && <StoragePanel />}
+              {activeTab === "backup"        && <BackupSettings />}
+              {activeTab === "logs"          && <LogsPanel />}
+              {activeTab === "about"         && <AboutPanel />}
+            </div>
           </div>
+
         </div>
       </DialogContent>
     </Dialog>
@@ -4611,7 +4812,7 @@ function MyAccountsPanel() {
                     <h5 className="text-sm font-medium text-[#202124]">Edit Account</h5>
                     <Button variant="ghost" size="sm" onClick={() => setEditingAccountId(null)} data-testid="button-cancel-edit">Cancel</Button>
                   </div>
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div className="space-y-1.5">
                       <Label className="text-xs text-[#5f6368]">Display Name</Label>
                       <Input value={editForm.name} onChange={(e) => setEditForm(f => ({ ...f, name: e.target.value }))} data-testid="input-edit-name" />
@@ -4634,8 +4835,8 @@ function MyAccountsPanel() {
                           data-testid="button-edit-protocol-imap">IMAP</button>
                       </div>
                     </div>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="col-span-2 space-y-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2 space-y-1.5">
                         <Label className="text-xs text-[#5f6368]">{editForm.protocol === "pop3" ? "POP3" : "IMAP"} Host</Label>
                         <Input value={editForm.host} onChange={(e) => { setEditForm(f => ({ ...f, host: e.target.value })); setEditIncomingTestResult(null); }} data-testid="input-edit-host" />
                       </div>
@@ -4644,7 +4845,7 @@ function MyAccountsPanel() {
                         <Input value={editForm.port} onChange={(e) => { setEditForm(f => ({ ...f, port: e.target.value })); setEditIncomingTestResult(null); }} data-testid="input-edit-port" />
                       </div>
                     </div>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div className="space-y-1.5">
                         <Label className="text-xs text-[#5f6368]">Username</Label>
                         <Input value={editForm.username} onChange={(e) => { setEditForm(f => ({ ...f, username: e.target.value })); setEditIncomingTestResult(null); setEditSmtpTestResult(null); }} autoComplete="off" data-testid="input-edit-username" />
@@ -4680,8 +4881,8 @@ function MyAccountsPanel() {
 
                   <div className="border border-[#dadce0] rounded-lg p-3 space-y-3 bg-[#fafbfd]">
                     <h5 className="text-xs font-medium text-[#202124]">Outgoing Mail Server (SMTP)</h5>
-                    <div className="grid grid-cols-3 gap-3">
-                      <div className="col-span-2 space-y-1.5">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                      <div className="sm:col-span-2 space-y-1.5">
                         <Label className="text-xs text-[#5f6368]">SMTP Host</Label>
                         <Input value={editForm.smtpHost} onChange={(e) => { setEditForm(f => ({ ...f, smtpHost: e.target.value })); setEditSmtpTestResult(null); }} data-testid="input-edit-smtp-host" />
                       </div>
@@ -4715,65 +4916,68 @@ function MyAccountsPanel() {
                 </div>
               ) : (
                 <>
-                  <div className="flex items-center justify-between">
-                    <div>
+                  {/* Account header: name/email + delete icon */}
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
                       <div className="font-medium text-sm text-[#202124]">{account.name}</div>
-                      <div className="text-xs text-[#5f6368]">{account.email}</div>
-                      <div className="text-xs text-[#5f6368] mt-0.5">
-                        {account.host}:{account.port} ({(account.protocol || "pop3").toUpperCase()}{account.tls ? "/TLS" : ""})
-                        {account.smtpHost && ` · SMTP: ${account.smtpHost}:${account.smtpPort}`}
-                      </div>
-                      {(account.protocol || "pop3") === "pop3" && (
-                        <div className="text-xs text-[#5f6368] mt-0.5">
-                          {account.deleteOnFetch ? "Delete from server after fetch" : "Keep messages on server"}
-                        </div>
-                      )}
-                      {account.lastFetched && (
-                        <div className="text-xs text-[#5f6368] mt-0.5">Last fetched: {format(new Date(account.lastFetched), "MMM d, h:mm a")}</div>
-                      )}
+                      <div className="text-xs text-[#5f6368] break-all">{account.email}</div>
                     </div>
-                    <div className="flex items-center gap-2">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => startEditing(account)}
-                        data-testid={`button-edit-${account.id}`}
-                      >
-                        <Pencil className="h-3 w-3 mr-1" /> Edit
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => fetchAccount(account.id)}
-                        disabled={fetchingAccounts.has(account.id)}
-                        data-testid={`button-fetch-${account.id}`}
-                      >
-                        <RefreshCw className={`h-3 w-3 mr-1 ${fetchingAccounts.has(account.id) ? "animate-spin" : ""}`} /> Fetch
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => testSavedAccount(account)}
-                        disabled={testingAccountIds.has(account.id)}
-                        data-testid={`button-test-account-${account.id}`}
-                      >
-                        {testingAccountIds.has(account.id) ? (
-                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                        ) : (
-                          <CheckCircle className="h-3 w-3 mr-1" />
-                        )}
-                        Test
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        className="h-8 w-8 text-red-500 hover:text-red-600"
-                        onClick={() => deleteMutation.mutate(account.id)}
-                        data-testid={`button-delete-account-${account.id}`}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-7 w-7 flex-shrink-0 text-red-400 hover:text-red-600 hover:bg-red-50"
+                      onClick={() => deleteMutation.mutate(account.id)}
+                      data-testid={`button-delete-account-${account.id}`}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </Button>
+                  </div>
+                  {/* Server info */}
+                  <div className="text-xs text-[#5f6368] leading-relaxed">
+                    <span>{account.host}:{account.port} ({(account.protocol || "pop3").toUpperCase()}{account.tls ? "/TLS" : ""})</span>
+                    {account.smtpHost && <span className="block sm:inline sm:before:content-['·'] sm:before:mx-1">SMTP: {account.smtpHost}:{account.smtpPort}</span>}
+                  </div>
+                  {(account.protocol || "pop3") === "pop3" && (
+                    <div className="text-xs text-[#9aa0a6]">
+                      {account.deleteOnFetch ? "Delete from server after fetch" : "Keep messages on server"}
                     </div>
+                  )}
+                  {account.lastFetched && (
+                    <div className="text-xs text-[#9aa0a6]">Last fetched: {format(new Date(account.lastFetched), "MMM d, h:mm a")}</div>
+                  )}
+                  {/* Action buttons row */}
+                  <div className="flex items-center gap-2 flex-wrap pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => startEditing(account)}
+                      data-testid={`button-edit-${account.id}`}
+                    >
+                      <Pencil className="h-3 w-3 mr-1" /> Edit
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => fetchAccount(account.id)}
+                      disabled={fetchingAccounts.has(account.id)}
+                      data-testid={`button-fetch-${account.id}`}
+                    >
+                      <RefreshCw className={`h-3 w-3 mr-1 ${fetchingAccounts.has(account.id) ? "animate-spin" : ""}`} /> Fetch
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => testSavedAccount(account)}
+                      disabled={testingAccountIds.has(account.id)}
+                      data-testid={`button-test-account-${account.id}`}
+                    >
+                      {testingAccountIds.has(account.id) ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <CheckCircle className="h-3 w-3 mr-1" />
+                      )}
+                      Test
+                    </Button>
                   </div>
 
                   <div className="border-t border-[#e8eaed] pt-2 flex items-center justify-between">
