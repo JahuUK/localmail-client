@@ -157,6 +157,12 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
           continue;
         }
         result.email.accountEmail = account.email;
+        // If the sender address matches the fetching account, treat as a sent email
+        // (some servers return outgoing mail in the same mailbox as incoming)
+        if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
+          result.email.folder = "sent";
+          result.email.isUnread = false;
+        }
         let accountLabel = await storage.getLabelByName(account.email);
         if (!accountLabel) {
           accountLabel = await storage.createLabel({ name: account.email, color: "#1a73e8" });
@@ -1105,7 +1111,11 @@ export async function registerRoutes(
           continue;
         }
         result.email.accountEmail = account.email;
-
+        // If the sender address matches the fetching account, treat as a sent email
+        if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
+          result.email.folder = "sent";
+          result.email.isUnread = false;
+        }
         let accountLabel = await storage.getLabelByName(account.email);
         if (!accountLabel) {
           accountLabel = await storage.createLabel({ name: account.email, color: "#1a73e8" });

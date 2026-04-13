@@ -3273,10 +3273,10 @@ function InlineReplyComposer({
           <button onClick={() => { const url = prompt("Enter URL:"); if (url) execCommand("createLink", url); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Insert link">
             <LinkIcon className="h-4 w-4" />
           </button>
-          <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Attach file">
+          <label htmlFor="file-input-inline" className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368] cursor-pointer" title="Attach file">
             <Paperclip className="h-4 w-4" />
-          </button>
-          <input ref={fileInputRef} type="file" multiple className="hidden" onChange={handleFileAttach} />
+          </label>
+          <input id="file-input-inline" ref={fileInputRef} type="file" multiple className="sr-only" onChange={handleFileAttach} />
         </div>
 
         <Button variant="ghost" size="icon" className="h-8 w-8 rounded-full hover:bg-[#f1f3f4] transition-colors" onClick={onClose} data-testid="button-inline-discard">
@@ -4114,19 +4114,20 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
             <LinkIcon className="h-4 w-4" />
           </button>
 
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]"
+          <label
+            htmlFor="file-input-compose"
+            className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368] cursor-pointer"
             title="Attach file"
             data-testid="button-attach-file"
           >
             <Paperclip className="h-4 w-4" />
-          </button>
+          </label>
           <input
+            id="file-input-compose"
             ref={fileInputRef}
             type="file"
             multiple
-            className="hidden"
+            className="sr-only"
             onChange={handleFileAttach}
             data-testid="input-file-attachment"
           />
