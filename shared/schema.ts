@@ -59,6 +59,7 @@ export const emailSchema = z.object({
   sendStatus: z.enum(["sending", "sent", "failed"]).optional(),
   sendError: z.string().optional(),
   scheduledFor: z.string().optional(),
+  trackingPixelsBlocked: z.number().optional(),
 });
 
 export type Email = z.infer<typeof emailSchema>;
@@ -112,6 +113,10 @@ export const generalSettingsSchema = z.object({
   clockFormat: z.enum(["12h", "24h"]).default("12h"),
   darkMode: z.boolean().default(false),
   mobileShowTagRow: z.boolean().default(true),
+  blockTrackingPixels: z.boolean().default(true),
+  confirmExternalLinks: z.boolean().default(true),
+  trustedDomains: z.array(z.string()).default([]),
+  warnDangerousAttachments: z.boolean().default(true),
   vacationReplyEnabled: z.boolean().default(false),
   vacationSubject: z.string().default(""),
   vacationBody: z.string().default(""),

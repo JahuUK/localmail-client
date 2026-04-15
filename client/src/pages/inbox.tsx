@@ -1,4 +1,5 @@
 import { useState, useRef, useCallback, useMemo, useEffect } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import ReactDOM from "react-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
@@ -81,6 +82,8 @@ import {
   PlusCircle,
   ListChecks,
   Sparkles,
+  Smartphone,
+  AlertTriangle,
 } from "lucide-react";
 import { format, isToday, isThisYear } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -141,6 +144,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const [activeAccount, setActiveAccount] = useState<string | null>(null);
   const [selectedEmailId, setSelectedEmailId] = useState<string | null>(null);
   const [selectedThreadEmails, setSelectedThreadEmails] = useState<Email[] | null>(null);
+  const historyPushedRef = useRef(false);
+  const suppressPopRef = useRef(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [composeOpen, setComposeOpen] = useState(false);
   const [composeDefaults, setComposeDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} | null>(null);
@@ -283,7 +288,49 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
 
   useEffect(() => {
     const totalUnread = inboxUnread;
-    document.title = totalUnread > 0 ? `Inbox (${totalUnread}) - LocalMail` : "LocalMail";
+    document.title = totalUnread > 0 ? `(${totalUnread}) LocalMail` : "LocalMail";
+
+    // ── Favicon badge ────────────────────────────────────────────────────────
+    const SIZE = 32;
+    const canvas = document.createElement("canvas");
+    canvas.width = SIZE;
+    canvas.height = SIZE;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const img = document.createElement("img") as HTMLImageElement;
+    img.src = "/favicon.ico";
+    img.onload = () => {
+      ctx.clearRect(0, 0, SIZE, SIZE);
+      ctx.drawImage(img, 0, 0, SIZE, SIZE);
+
+      if (totalUnread > 0) {
+        const BADGE = 13;
+        const cx = SIZE - BADGE / 2 - 1;
+        const cy = BADGE / 2 + 1;
+        // Red circle
+        ctx.beginPath();
+        ctx.arc(cx, cy, BADGE / 2, 0, 2 * Math.PI);
+        ctx.fillStyle = "#d93025";
+        ctx.fill();
+        // White count
+        const label = totalUnread > 99 ? "99+" : String(totalUnread);
+        ctx.fillStyle = "#ffffff";
+        ctx.font = `bold ${label.length > 2 ? 6 : label.length > 1 ? 7 : 9}px Arial`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(label, cx, cy + 0.5);
+      }
+
+      let link = document.querySelector<HTMLLinkElement>("link[rel~='icon']");
+      if (!link) {
+        link = document.createElement("link");
+        link.rel = "icon";
+        document.head.appendChild(link);
+      }
+      link.type = "image/png";
+      link.href = canvas.toDataURL("image/png");
+    };
   }, [inboxUnread]);
 
   const starMutation = useMutation({
@@ -544,11 +591,20 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     if (email.isUnread) {
       readMutation.mutate({ id: email.id, isUnread: false });
     }
+    // Push a history entry so the device back button can return to the list
+    history.pushState({ inboxView: "detail" }, "");
+    historyPushedRef.current = true;
   };
 
   const handleBack = () => {
     setSelectedEmailId(null);
     setSelectedThreadEmails(null);
+    // Pop the history entry we pushed, but suppress the resulting popstate
+    if (historyPushedRef.current) {
+      suppressPopRef.current = true;
+      historyPushedRef.current = false;
+      history.back();
+    }
   };
 
   const handleSelectThread = (threadEmails: Email[]) => {
@@ -557,7 +613,30 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
     threadEmails.filter(e => e.isUnread).forEach(e => {
       readMutation.mutate({ id: e.id, isUnread: false });
     });
+    // Push a history entry so the device back button can return to the list
+    history.pushState({ inboxView: "detail" }, "");
+    historyPushedRef.current = true;
   };
+
+  // Intercept the device/browser back button and treat it as in-app navigation
+  useEffect(() => {
+    // Establish a base history entry so there's always a state to pop back to
+    history.replaceState({ inboxView: "list" }, "");
+
+    const onPopState = () => {
+      if (suppressPopRef.current) {
+        suppressPopRef.current = false;
+        return;
+      }
+      // Device back was pressed — close the current detail view
+      setSelectedEmailId(null);
+      setSelectedThreadEmails(null);
+      historyPushedRef.current = false;
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
   const sanitizeForCompose = (html: string) => {
     return DOMPurify.sanitize(html, {
@@ -845,7 +924,12 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                   data-testid={`folder-${folder.id}`}
                 >
                   <div className={`flex items-center ${sidebarCollapsed ? "" : "gap-4"}`}>
-                    <folder.icon className="w-[18px] h-[18px]" />
+                    <div className="relative flex-shrink-0">
+                      <folder.icon className="w-[18px] h-[18px]" />
+                      {sidebarCollapsed && folder.id !== "trash" && (unreadCounts[folder.id] || 0) > 0 && (
+                        <span className="absolute -bottom-1 -right-1.5 w-[9px] h-[9px] bg-[#d93025] rounded-full border-2 border-white" />
+                      )}
+                    </div>
                     {!sidebarCollapsed && <span>{folder.label}</span>}
                   </div>
                   {!sidebarCollapsed && folder.id !== "trash" && (unreadCounts[folder.id] || 0) > 0 && (
@@ -1537,6 +1621,7 @@ function EmailList({
 }) {
   const getLabelById = (id: string) => labels.find(l => l.id === id);
   const rowHeight = displayDensity === "compact" ? "h-8" : displayDensity === "comfortable" ? "h-12" : "h-10";
+  const estimatedRowHeight = displayDensity === "compact" ? 32 : displayDensity === "comfortable" ? 48 : 40;
 
   const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; email: Email } | null>(null);
   const [ctxSubMenu, setCtxSubMenu] = useState<"folder" | "label" | null>(null);
@@ -1572,6 +1657,15 @@ function EmailList({
     return groups;
   }, [emails, conversationView]);
 
+  const parentRef = useRef<HTMLDivElement>(null);
+  const rowVirtualizer = useVirtualizer({
+    count: threads.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => estimatedRowHeight,
+    overscan: 10,
+    measureElement: (el) => el.getBoundingClientRect().height,
+  });
+
   const allFolders = [
     ...FOLDERS.filter(f => !["starred", "snoozed", "all"].includes(f.id)),
     ...customFolders.map(cf => ({ id: `custom:${cf.id}`, label: cf.name })),
@@ -1591,9 +1685,10 @@ function EmailList({
   }
 
   return (
-    <div className="flex-1 overflow-y-auto overflow-x-hidden relative">
-      <div className="pb-16">
-        {threads.map((threadEmails) => {
+    <div ref={parentRef} className="flex-1 overflow-y-auto overflow-x-hidden relative">
+      <div style={{ height: `${rowVirtualizer.getTotalSize()}px`, width: "100%", position: "relative" }}>
+        {rowVirtualizer.getVirtualItems().map((virtualItem) => {
+          const threadEmails = threads[virtualItem.index];
           const latestEmail = threadEmails[threadEmails.length - 1];
           const hasUnread = threadEmails.some(e => e.isUnread);
           const hasAttachments = threadEmails.some(e => e.hasAttachments);
@@ -1605,7 +1700,10 @@ function EmailList({
 
           return (
             <div
-              key={latestEmail.id}
+              key={virtualItem.key}
+              data-index={virtualItem.index}
+              ref={rowVirtualizer.measureElement}
+              style={{ position: "absolute", top: 0, left: 0, width: "100%", transform: `translateY(${virtualItem.start}px)` }}
               onClick={() => {
                 if (count > 1 && conversationView) {
                   onSelectThread(threadEmails);
@@ -1894,6 +1992,42 @@ function ThreadEmailCard({
   onReplyAll: (fullEmail: Email) => void;
   onForward: (fullEmail: Email) => void;
 }) {
+  const [linkConfirmUrl, setLinkConfirmUrl] = useState<string | null>(null);
+
+  const settingsQuery = useQuery<GeneralSettings>({ queryKey: ["/api/settings"] });
+  const confirmExternalLinks = settingsQuery.data?.confirmExternalLinks !== false;
+  const trustedDomains: string[] = settingsQuery.data?.trustedDomains || [];
+
+  const queryClient = useQueryClient();
+  const addTrustedDomainMutation = useMutation({
+    mutationFn: async (domain: string) => {
+      const current: string[] = settingsQuery.data?.trustedDomains || [];
+      if (current.includes(domain)) return;
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trustedDomains: [...current, domain] }),
+      });
+      if (!res.ok) throw new Error("Failed to save trusted domain");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/settings"] }),
+  });
+
+  const handleBodyClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement).closest("a");
+    if (!anchor) return;
+    const href = anchor.href;
+    if (!href || href.startsWith("mailto:")) return;
+    if (!confirmExternalLinks) return;
+    let domain = "";
+    try { domain = new URL(href).hostname; } catch { return; }
+    if (trustedDomains.includes(domain)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setLinkConfirmUrl(href);
+  }, [confirmExternalLinks, trustedDomains]);
+
   const fullEmailQuery = useQuery<Email>({
     queryKey: [`/api/emails/${email.id}`],
     enabled: expanded,
@@ -1977,13 +2111,27 @@ function ThreadEmailCard({
             </div>
           ) : (
             <div className="px-6 py-4">
+              {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && (
+                <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-[#e8f5e9] border border-[#c8e6c9] text-[#2e7d32] text-xs font-medium" data-testid={`banner-tracking-blocked-thread-${email.id}`}>
+                  <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0" />
+                  {fullEmail.trackingPixelsBlocked} tracking pixel{fullEmail.trackingPixelsBlocked !== 1 ? "s" : ""} blocked
+                </div>
+              )}
               {bodyHtmlContent ? (
-                <div className="email-html-body overflow-x-auto" dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
+                <div className="email-html-body overflow-x-auto" onClick={handleBodyClick} dangerouslySetInnerHTML={{ __html: sanitizedHtml }} />
               ) : (
                 <pre className="text-sm text-[#3c4043] dark:text-[#bdc1c6] whitespace-pre-wrap font-sans leading-relaxed">{fullEmail.body}</pre>
               )}
               {fullEmail.attachments && fullEmail.attachments.some((a: { cid?: string }) => !a.cid) && (
                 <AttachmentPreview attachments={fullEmail.attachments} emailId={email.id} />
+              )}
+              {linkConfirmUrl && (
+                <LinkConfirmDialog
+                  url={linkConfirmUrl}
+                  onConfirm={() => { window.open(linkConfirmUrl, "_blank", "noopener,noreferrer"); setLinkConfirmUrl(null); }}
+                  onCancel={() => setLinkConfirmUrl(null)}
+                  onTrust={(domain) => addTrustedDomainMutation.mutate(domain)}
+                />
               )}
               <div className="mt-5 flex gap-2 flex-wrap">
                 <Button size="sm" variant="outline" className="rounded-full px-4 h-8 text-[#3c4043] border-[#dadce0] hover:bg-[#f1f3f4]" onClick={() => onReply(fullEmail)} data-testid={`thread-reply-${email.id}`}>
@@ -2154,8 +2302,87 @@ function formatFileSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
+// ─── Dangerous extension detection ───────────────────────────────────────────
+
+const DANGEROUS_EXTENSIONS = new Set([
+  "exe", "bat", "cmd", "com", "msi", "ps1", "psm1", "psd1",
+  "vbs", "vbe", "js", "jse", "wsf", "wsh", "scr", "pif",
+  "lnk", "hta", "jar", "reg", "inf", "dll", "cpl", "drv",
+  "sys", "apk", "dmg", "ade", "adp", "msp", "mst",
+]);
+
+function isDangerousFilename(filename: string): boolean {
+  const lower = filename.toLowerCase();
+  const ext = lower.split(".").pop() ?? "";
+  if (DANGEROUS_EXTENSIONS.has(ext)) return true;
+  // Double-extension trick: e.g. "report.pdf.exe"
+  const parts = lower.split(".");
+  if (parts.length > 2 && DANGEROUS_EXTENSIONS.has(parts[parts.length - 1])) return true;
+  return false;
+}
+
+// ─── External link confirmation dialog ───────────────────────────────────────
+
+function LinkConfirmDialog({
+  url,
+  onConfirm,
+  onCancel,
+  onTrust,
+}: {
+  url: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onTrust: (domain: string) => void;
+}) {
+  const [addToTrusted, setAddToTrusted] = useState(false);
+  let domain = "";
+  try { domain = new URL(url).hostname; } catch {}
+
+  return (
+    <Dialog open onOpenChange={(v) => { if (!v) onCancel(); }}>
+      <DialogContent className="sm:max-w-[460px]" aria-describedby="link-confirm-desc">
+        <DialogTitle className="flex items-center gap-2 text-base">
+          <ExternalLink className="h-4 w-4 text-[#f29900]" />
+          Opening external link
+        </DialogTitle>
+        <div id="link-confirm-desc" className="space-y-3 text-sm">
+          <p className="text-[#5f6368]">You are about to leave LocalMail and open:</p>
+          <div className="px-3 py-2 bg-[#f6f8fc] border border-[#dadce0] rounded-lg font-mono text-xs break-all text-[#202124]">
+            {url}
+          </div>
+          <label className="flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={addToTrusted}
+              onChange={(e) => setAddToTrusted(e.target.checked)}
+              className="w-4 h-4 rounded"
+              data-testid="checkbox-trust-domain"
+            />
+            <span className="text-[#5f6368]">
+              Don't warn me about <span className="font-medium text-[#202124]">{domain}</span> again
+            </span>
+          </label>
+        </div>
+        <div className="flex justify-end gap-2 mt-2">
+          <Button variant="outline" onClick={onCancel} data-testid="button-link-cancel">Cancel</Button>
+          <Button
+            onClick={() => { if (addToTrusted && domain) onTrust(domain); onConfirm(); }}
+            className="bg-[#1a73e8] hover:bg-[#1557b0] text-white"
+            data-testid="button-link-open"
+          >
+            <ExternalLink className="h-3.5 w-3.5 mr-1.5" />
+            Open link
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 function AttachmentPreview({ attachments, emailId }: { attachments: EmailAttachment[]; emailId: string }) {
   const [previewAtt, setPreviewAtt] = useState<EmailAttachment | null>(null);
+  const settingsQuery = useQuery<GeneralSettings>({ queryKey: ["/api/settings"] });
+  const warnDangerous = settingsQuery.data?.warnDangerousAttachments !== false;
 
   const visibleAttachments = attachments.filter(att => !att.cid);
   if (visibleAttachments.length === 0) return null;
@@ -2215,15 +2442,24 @@ function AttachmentPreview({ attachments, emailId }: { attachments: EmailAttachm
         <div className="grid grid-cols-2 gap-2">
           {otherAtts.map(att => {
             const Icon = getAttachmentIcon(att.contentType);
+            const dangerous = warnDangerous && isDangerousFilename(att.filename);
             return (
-              <a key={att.id} href={`/api/emails/${emailId}/attachments/${att.id}`} download={att.filename} className="flex items-center gap-3 p-3 border border-[#dadce0] dark:border-[#3c4043] rounded-lg hover:bg-[#f6f8fc] dark:hover:bg-[#2d2e30] transition-colors group" data-testid={`attachment-${att.id}`}>
-                <Icon className="w-8 h-8 text-[#5f6368]" />
+              <div key={att.id} className="flex flex-col gap-1">
+                {dangerous && (
+                  <div className="flex items-center gap-1.5 px-2 py-1 bg-[#fce8e6] border border-[#f5c6c2] rounded text-xs text-[#c5221f] font-medium">
+                    <AlertTriangle className="h-3 w-3 flex-shrink-0" />
+                    Potentially dangerous file type
+                  </div>
+                )}
+              <a href={`/api/emails/${emailId}/attachments/${att.id}`} download={att.filename} className={`flex items-center gap-3 p-3 border rounded-lg hover:bg-[#f6f8fc] dark:hover:bg-[#2d2e30] transition-colors group ${dangerous ? "border-[#f5c6c2] bg-[#fce8e6]/30" : "border-[#dadce0] dark:border-[#3c4043]"}`} data-testid={`attachment-${att.id}`}>
+                <Icon className={`w-8 h-8 ${dangerous ? "text-[#c5221f]" : "text-[#5f6368]"}`} />
                 <div className="flex-1 min-w-0">
                   <div className="text-sm text-[#202124] dark:text-[#e8eaed] truncate">{att.filename}</div>
                   <div className="text-xs text-[#5f6368]">{formatFileSize(att.size)}</div>
                 </div>
                 <Download className="w-4 h-4 text-[#5f6368] opacity-0 group-hover:opacity-100 transition-opacity" />
               </a>
+              </div>
             );
           })}
         </div>
@@ -2317,7 +2553,42 @@ function EmailView({
   const [inlineReplyMode, setInlineReplyMode] = useState<"reply" | "replyAll" | "forward" | null>(null);
   const [inlineReplyDefaults, setInlineReplyDefaults] = useState<{to?: string; cc?: string; subject?: string; body?: string; inReplyTo?: string; references?: string; accountEmail?: string} | null>(null);
   const [inlineReplyKey, setInlineReplyKey] = useState(0);
+  const [linkConfirmUrl, setLinkConfirmUrl] = useState<string | null>(null);
   const getLabelById = (id: string) => labels.find(l => l.id === id);
+
+  const settingsQuery = useQuery<GeneralSettings>({ queryKey: ["/api/settings"] });
+  const confirmExternalLinks = settingsQuery.data?.confirmExternalLinks !== false;
+  const trustedDomains: string[] = settingsQuery.data?.trustedDomains || [];
+
+  const queryClient = useQueryClient();
+  const addTrustedDomainMutation = useMutation({
+    mutationFn: async (domain: string) => {
+      const current: string[] = settingsQuery.data?.trustedDomains || [];
+      if (current.includes(domain)) return;
+      const res = await fetch("/api/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trustedDomains: [...current, domain] }),
+      });
+      if (!res.ok) throw new Error("Failed to save trusted domain");
+      return res.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/settings"] }),
+  });
+
+  const handleEmailBodyClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const anchor = (e.target as HTMLElement).closest("a");
+    if (!anchor) return;
+    const href = anchor.href;
+    if (!href || href.startsWith("mailto:")) return;
+    if (!confirmExternalLinks) return;
+    let domain = "";
+    try { domain = new URL(href).hostname; } catch { return; }
+    if (trustedDomains.includes(domain)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setLinkConfirmUrl(href);
+  }, [confirmExternalLinks, trustedDomains]);
 
   useEffect(() => {
     const handleClickOutside = () => { setMoreMenuOpen(false); };
@@ -2626,6 +2897,14 @@ function EmailView({
         </div>
       </div>
 
+      {/* Tracking pixel badge */}
+      {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && (
+        <div className="flex items-center gap-2 px-4 py-2 bg-[#e8f5e9] border-b border-[#c8e6c9] text-[#2e7d32] text-xs font-medium no-print" data-testid="banner-tracking-blocked">
+          <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0" />
+          {fullEmail.trackingPixelsBlocked} tracking pixel{fullEmail.trackingPixelsBlocked !== 1 ? "s" : ""} blocked — sender cannot see if or when you opened this email.
+        </div>
+      )}
+
       <ScrollArea className="flex-1">
         <div className="px-6 py-6 min-w-0">
           {/* Subject + Labels */}
@@ -2790,6 +3069,7 @@ function EmailView({
             {hasHtml && viewMode === "html" ? (
               <div
                 className="email-html-body"
+                onClick={handleEmailBodyClick}
                 dangerouslySetInnerHTML={{ __html: sanitizedHtml }}
               />
             ) : (
@@ -2830,6 +3110,16 @@ function EmailView({
           )}
         </div>
       </ScrollArea>
+
+      {/* External link confirmation dialog */}
+      {linkConfirmUrl && (
+        <LinkConfirmDialog
+          url={linkConfirmUrl}
+          onConfirm={() => { window.open(linkConfirmUrl, "_blank", "noopener,noreferrer"); setLinkConfirmUrl(null); }}
+          onCancel={() => setLinkConfirmUrl(null)}
+          onTrust={(domain) => addTrustedDomainMutation.mutate(domain)}
+        />
+      )}
     </div>
   );
 }
@@ -2935,16 +3225,37 @@ function InlineReplyComposer({
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
-    const items = e.clipboardData.items;
+    const items = e.clipboardData?.items;
+    if (!items) return;
     for (let i = 0; i < items.length; i++) {
-      if (items[i].type.startsWith("image/")) {
+      const item = items[i];
+      if (item.type.startsWith("image/")) {
         e.preventDefault();
-        const file = items[i].getAsFile();
+        const file = item.getAsFile();
         if (!file) continue;
         const reader = new FileReader();
-        reader.onload = () => {
-          const dataUrl = reader.result as string;
-          setAttachments(prev => [...prev, { name: file.name || "pasted-image.png", size: file.size, type: file.type, dataUrl }]);
+        reader.onload = (ev) => {
+          const dataUrl = ev.target?.result as string;
+          if (!editorRef.current) return;
+          const img = document.createElement("img");
+          img.src = dataUrl;
+          img.style.maxWidth = "100%";
+          img.style.borderRadius = "4px";
+          img.style.margin = "4px 0";
+          img.alt = file.name || "pasted-image";
+          const sel = window.getSelection();
+          if (sel && sel.rangeCount > 0) {
+            const range = sel.getRangeAt(0);
+            range.deleteContents();
+            range.insertNode(img);
+            range.setStartAfter(img);
+            range.collapse(true);
+            sel.removeAllRanges();
+            sel.addRange(range);
+          } else {
+            editorRef.current.appendChild(img);
+          }
+          syncBody();
         };
         reader.readAsDataURL(file);
         return;
@@ -4336,7 +4647,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.3"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4349,8 +4660,37 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.3",
+      version: "v0.8.5",
       label: "Latest",
+      date: "April 2026",
+      summary: "Performance and security — virtualised email list, strict settings validation",
+      items: [
+        "Virtualised email list: only visible rows are rendered regardless of inbox size, keeping scrolling smooth with thousands of emails",
+        "Row heights are measured dynamically so compact, default, and comfortable density — and mobile cards — all work correctly",
+        "Settings API now uses strict schema validation: unknown or misspelled fields are rejected with a clear error instead of being silently ignored",
+        "Settings endpoint now accepts both PUT and PATCH, so trusted-domain updates from the link-confirmation dialog are correctly saved",
+      ],
+    },
+    {
+      version: "v0.8.4",
+      label: "",
+      date: "April 2026",
+      summary: "Security hardening — tracking pixels, link interception, dangerous attachments, login audit",
+      items: [
+        "Tracking pixel blocking: invisible 1×1 spy images stripped server-side on email open; blocked count shown as a green badge; logged in Activity Log",
+        "External link confirmation: clicking any link in an HTML email shows a dialog with the full URL before opening — tick 'Don't warn me again' to trust a domain permanently",
+        "Trusted domains list in Settings → Security: domains bypass the link dialog; add or remove entries manually",
+        "Dangerous attachment warnings: .exe, .bat, .ps1, .js, .vbs, .scr, .lnk, .jar and 20+ other risky types flagged with a red warning badge and tinted border; double-extension tricks (e.g. report.pdf.exe) detected",
+        "Login events now record the client IP address — user logins, admin logins, and failed attempts all captured in the Activity Log",
+        "Security panel expanded: three new toggles (block tracking pixels, confirm external links, warn on dangerous attachments) plus trusted domain manager",
+        "New Security and Mobile tabs under System settings; Mobile settings extracted from Appearance",
+        "Browser tab favicon badge shows unread email count as a red dot; page title updated to '(N) LocalMail'",
+        "Red dot overlay on sidebar folder icons when the sidebar is collapsed and the folder has unread mail",
+      ],
+    },
+    {
+      version: "v0.8.3",
+      label: "",
       date: "April 2026",
       summary: "Folder and label filtering improvements",
       items: [
@@ -4509,7 +4849,7 @@ function AboutPanel() {
         </div>
         <div>
           <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
-          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.3</p>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.5</p>
           <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
             A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
           </p>
@@ -4585,7 +4925,7 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
   const [activeTab, setActiveTab] = useState<
     "appearance" | "notifications" | "vacation" | "composing" |
     "accounts" | "add-account" | "rules" | "labels" | "folders" |
-    "storage" | "backup" | "logs" | "about"
+    "storage" | "backup" | "logs" | "security" | "mobile" | "about"
   >("appearance");
   const [mobileShowContent, setMobileShowContent] = useState(false);
 
@@ -4617,6 +4957,8 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
     {
       label: "System",
       items: [
+        { id: "security" as const, label: "Security", icon: ShieldCheck },
+        { id: "mobile" as const, label: "Mobile", icon: Smartphone },
         { id: "storage" as const, label: "Storage", icon: Trash2 },
         { id: "backup" as const, label: "Backup", icon: HardDrive },
         { id: "logs" as const, label: "Logs", icon: Code },
@@ -4691,6 +5033,8 @@ function SettingsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (
               {activeTab === "rules"         && <RulesSettings />}
               {activeTab === "labels"        && <LabelsSettings />}
               {activeTab === "folders"       && <FoldersSettings />}
+              {activeTab === "security"      && <SecurityPanel />}
+              {activeTab === "mobile"        && <MobilePanel />}
               {activeTab === "storage"       && <StoragePanel />}
               {activeTab === "backup"        && <BackupSettings />}
               {activeTab === "logs"          && <LogsPanel />}
@@ -5576,15 +5920,105 @@ function AppearancePanel() {
         </button>
       </SettingRow>
 
-      <Separator />
+    </div>
+  );
+}
 
-      <SettingSection label="Mobile view" description="Options that only affect how emails appear on small screens">
-        <SettingRow label="Show inbox tag row" description="Display the coloured account and label pills at the bottom of each email card on mobile">
-          <button onClick={() => update({ mobileShowTagRow: !(s.mobileShowTagRow !== false) })} className={TOGGLE(s.mobileShowTagRow !== false)} data-testid="toggle-mobile-tag-row">
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.mobileShowTagRow !== false ? "left-6" : "left-1"}`} />
+// ─── Mobile panel ─────────────────────────────────────────────────────────────
+
+function MobilePanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
+
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Mobile" subtitle="Options that only affect how LocalMail looks and behaves on small screens" isPending={isPending} />
+
+      <SettingRow label="Show inbox tag row" description="Display the coloured account and label pills at the bottom of each email card on mobile">
+        <button onClick={() => update({ mobileShowTagRow: !(s.mobileShowTagRow !== false) })} className={TOGGLE(s.mobileShowTagRow !== false)} data-testid="toggle-mobile-tag-row">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.mobileShowTagRow !== false ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
+    </div>
+  );
+}
+
+// ─── Security panel ───────────────────────────────────────────────────────────
+
+function SecurityPanel() {
+  const { s, update, isPending } = useSettingsPanel();
+  const [newDomain, setNewDomain] = useState("");
+  if (!s) return <div className="p-8 text-sm text-[#5f6368]">Loading…</div>;
+
+  const trustedDomains: string[] = s.trustedDomains || [];
+
+  const removeTrustedDomain = (domain: string) => {
+    update({ trustedDomains: trustedDomains.filter(d => d !== domain) });
+  };
+
+  const addTrustedDomain = () => {
+    const d = newDomain.trim().toLowerCase().replace(/^https?:\/\//, "").split("/")[0];
+    if (!d || trustedDomains.includes(d)) { setNewDomain(""); return; }
+    update({ trustedDomains: [...trustedDomains, d] });
+    setNewDomain("");
+  };
+
+  return (
+    <div className="p-8 max-w-[700px] space-y-7">
+      <PanelHeader title="Security" subtitle="Protect your privacy and guard against threats in incoming emails" isPending={isPending} />
+
+      <SettingSection label="Incoming email protection" description="Defences applied automatically when you open or fetch emails">
+        <SettingRow label="Block tracking pixels" description="Silently remove invisible 1×1 images senders embed to detect if and when you open their email. When blocked, a green notice appears in the email and the event is recorded in the Activity Log.">
+          <button onClick={() => update({ blockTrackingPixels: !(s.blockTrackingPixels !== false) })} className={TOGGLE(s.blockTrackingPixels !== false)} data-testid="toggle-block-tracking-pixels">
+            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.blockTrackingPixels !== false ? "left-6" : "left-1"}`} />
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Confirm external links" description="Show a confirmation dialog before opening any link in an email. You can trust specific domains to skip the prompt for them.">
+          <button onClick={() => update({ confirmExternalLinks: !(s.confirmExternalLinks !== false) })} className={TOGGLE(s.confirmExternalLinks !== false)} data-testid="toggle-confirm-external-links">
+            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.confirmExternalLinks !== false ? "left-6" : "left-1"}`} />
+          </button>
+        </SettingRow>
+
+        <SettingRow label="Warn on dangerous attachments" description="Highlight attachments with executable or script file types (e.g. .exe, .bat, .ps1, .js) that could run malicious code.">
+          <button onClick={() => update({ warnDangerousAttachments: !(s.warnDangerousAttachments !== false) })} className={TOGGLE(s.warnDangerousAttachments !== false)} data-testid="toggle-warn-dangerous-attachments">
+            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.warnDangerousAttachments !== false ? "left-6" : "left-1"}`} />
           </button>
         </SettingRow>
       </SettingSection>
+
+      {s.confirmExternalLinks !== false && (
+        <SettingSection label="Trusted domains" description="Links to these domains will open directly without confirmation. Domains are added automatically when you click 'Don't warn me again' in the link dialog.">
+          <div className="space-y-2">
+            {trustedDomains.length === 0 ? (
+              <p className="text-sm text-[#5f6368] italic">No trusted domains yet. Open an email link and tick "Don't warn me again" to add one.</p>
+            ) : (
+              <div className="flex flex-wrap gap-2">
+                {trustedDomains.map(domain => (
+                  <div key={domain} className="flex items-center gap-1.5 px-3 py-1.5 bg-[#e8f0fe] border border-[#c5d8fd] rounded-full text-sm text-[#1a73e8] font-medium">
+                    <span data-testid={`trusted-domain-${domain}`}>{domain}</span>
+                    <button onClick={() => removeTrustedDomain(domain)} className="text-[#5f6368] hover:text-[#c5221f] transition-colors" data-testid={`remove-trusted-domain-${domain}`} title="Remove">
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+            <div className="flex gap-2 pt-1">
+              <input
+                type="text"
+                value={newDomain}
+                onChange={(e) => setNewDomain(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") addTrustedDomain(); }}
+                placeholder="example.com"
+                className="flex-1 px-3 py-2 text-sm border border-[#dadce0] rounded-lg focus:outline-none focus:ring-2 focus:ring-[#1a73e8] focus:border-transparent"
+                data-testid="input-new-trusted-domain"
+              />
+              <Button size="sm" onClick={addTrustedDomain} disabled={!newDomain.trim()} data-testid="button-add-trusted-domain">Add</Button>
+            </div>
+          </div>
+        </SettingSection>
+      )}
     </div>
   );
 }

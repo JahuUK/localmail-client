@@ -183,6 +183,10 @@ export class UserStorage {
       emailsPerPage: 20,
       darkMode: false,
       mobileShowTagRow: true,
+      blockTrackingPixels: true,
+      confirmExternalLinks: true,
+      trustedDomains: [],
+      warnDangerousAttachments: true,
     };
 
     const emailsDir = userEmailsDir(userId);

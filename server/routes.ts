@@ -114,6 +114,59 @@ function getUserStorage(req: Request): UserStorage {
 
 const autoFetchTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
 
+function getClientIp(req: Request): string {
+  const fwd = req.headers["x-forwarded-for"];
+  if (fwd) return (Array.isArray(fwd) ? fwd[0] : fwd).split(",")[0].trim();
+  return req.socket?.remoteAddress || "unknown";
+}
+
+// ─── Tracking pixel detection ─────────────────────────────────────────────────
+
+function isTrackingPixelAttrs(attrs: string): boolean {
+  // 1×1 or 0×0 via HTML attributes
+  const w1 = /width\s*=\s*["']?\s*1\s*["']?/i.test(attrs);
+  const h1 = /height\s*=\s*["']?\s*1\s*["']?/i.test(attrs);
+  const w0 = /width\s*=\s*["']?\s*0\s*["']?/i.test(attrs);
+  const h0 = /height\s*=\s*["']?\s*0\s*["']?/i.test(attrs);
+  if ((w1 && h1) || (w0 && h0)) return true;
+  // 1px/0px via inline style
+  if (/width\s*:\s*[01]px/i.test(attrs) && /height\s*:\s*[01]px/i.test(attrs)) return true;
+  // Hidden via CSS
+  if (/display\s*:\s*none/i.test(attrs) || /visibility\s*:\s*hidden/i.test(attrs)) return true;
+  // Known tracking domains / path signatures in the src
+  const srcMatch = attrs.match(/src\s*=\s*["']([^"']+)["']/i);
+  if (srcMatch) {
+    const src = srcMatch[1].toLowerCase();
+    const patterns = [
+      "/track/", "/pixel/", "/open/", "/beacon/", "/trk/", "/wf/open",
+      "t.gif", "t.png", "pixel.gif", "pixel.png", "open.gif",
+      "mailchimp.com/track", "list-manage.com", "sendgrid.net/wf/",
+      "mandrillapp.com", "hubspot.com/track", "hsforms.com", "hscta.net",
+      "exacttarget.com", "salesforce.com/track", "marketo.com/trk",
+      "mktoresp.com", "mktoinsights.com", "eloqua.com/e/f", "pardot.com/l/",
+      "mailgun.com/o/", "postmark.com/track", "click.pstmrk",
+      "campaignmonitor.com/t/", "createsend.com", "cmail",
+      "klaviyo.com/open", "kmail-", "mailerlite.com/track",
+      "convertkit.com/open", "aweber.com/open", "getresponse.com/trk",
+      "constantcontact.com/track", "ctct.net", "activecampaign.com/lt",
+      "drip.com/p/", "track.customer.io", "go.sparkpostmail",
+      "rs6.net/tn", "r20.rs6.net", "app.link/track",
+    ];
+    if (patterns.some(p => src.includes(p))) return true;
+  }
+  return false;
+}
+
+function detectAndBlockTrackingPixels(html: string): { html: string; count: number } {
+  if (!html) return { html, count: 0 };
+  let count = 0;
+  const processed = html.replace(/<img\b([^>]*)>/gi, (match, attrs) => {
+    if (isTrackingPixelAttrs(attrs)) { count++; return ""; }
+    return match;
+  });
+  return { html: processed, count };
+}
+
 type LogEntry = { timestamp: string; level: "info" | "warn" | "error" | "success"; source: string; message: string };
 const userLogs: Map<string, LogEntry[]> = new Map();
 const MAX_LOGS = 2000;
@@ -346,9 +399,10 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Username and password are required" });
     }
     const user = await globalStorage.getUserByUsername(username);
+    const ip = getClientIp(req);
     if (!user || !verifyPassword(password, user.password)) {
-      if (user) addLog(user.id, "warn", "Auth", `Failed login attempt for "${username}" (wrong password)`);
-      else console.warn(`[Auth] Failed login attempt for unknown username "${username}"`);
+      if (user) addLog(user.id, "warn", "Auth", `Failed login attempt for "${username}" from ${ip} (wrong password)`);
+      else console.warn(`[Auth] Failed login attempt for unknown username "${username}" from ${ip}`);
       return res.status(401).json({ message: "Invalid username or password" });
     }
     const newHash = rehashIfNeeded(password, user.password);
@@ -356,7 +410,7 @@ export async function registerRoutes(
       await globalStorage.updateUserPassword(user.id, newHash);
     }
     req.session.userId = user.id;
-    addLog(user.id, "info", "Auth", `User "${user.username}" logged in`);
+    addLog(user.id, "success", "Auth", `User "${user.username}" logged in successfully from ${ip}`);
     res.json({ id: user.id, username: user.username, displayName: user.displayName });
   });
 
@@ -375,10 +429,13 @@ export async function registerRoutes(
       return res.status(400).json({ message: "Username and password are required" });
     }
     const user = await globalStorage.getUserByUsername(username);
+    const ip = getClientIp(req);
     if (!user || !verifyPassword(password, user.password)) {
+      if (user) addLog(user.id, "warn", "Auth", `Failed admin login attempt for "${username}" from ${ip} (wrong password)`);
       return res.status(401).json({ message: "Invalid username or password" });
     }
     if (!user.isAdmin) {
+      addLog(user.id, "warn", "Auth", `Non-admin user "${username}" attempted admin login from ${ip}`);
       return res.status(403).json({ message: "This account does not have admin privileges" });
     }
     const newHash = rehashIfNeeded(password, user.password);
@@ -386,7 +443,7 @@ export async function registerRoutes(
       await globalStorage.updateUserPassword(user.id, newHash);
     }
     req.session.userId = user.id;
-    addLog(user.id, "info", "Auth", `Admin "${user.username}" logged in`);
+    addLog(user.id, "success", "Auth", `Admin "${user.username}" logged in successfully from ${ip}`);
     res.json({ id: user.id, username: user.username, displayName: user.displayName, isAdmin: true });
   });
 
@@ -492,8 +549,17 @@ export async function registerRoutes(
 
   app.get("/api/emails/:id", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
+    const userId = req.session.userId!;
     const email = await storage.getEmail(req.params.id);
     if (!email) return res.status(404).json({ message: "Email not found" });
+    const settings = await storage.getSettings();
+    if (settings.blockTrackingPixels !== false && email.bodyHtml) {
+      const { html, count } = detectAndBlockTrackingPixels(email.bodyHtml);
+      if (count > 0) {
+        addLog(userId, "info", "Privacy", `Blocked ${count} tracking pixel${count !== 1 ? "s" : ""} from ${email.sender.email} — "${email.subject}"`);
+        return res.json({ ...email, bodyHtml: html, trackingPixelsBlocked: count });
+      }
+    }
     res.json(email);
   });
 
@@ -922,16 +988,19 @@ export async function registerRoutes(
     res.json(settings);
   });
 
-  app.put("/api/settings", requireAuth, async (req, res) => {
+  const handleSettingsUpdate = async (req: Request, res: Response) => {
     const storage = getUserStorage(req);
     const userId = req.session.userId!;
-    const parsed = generalSettingsSchema.partial().safeParse(req.body);
-    if (!parsed.success) return res.status(400).json({ message: parsed.error.message });
+    const parsed = generalSettingsSchema.partial().strict().safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ message: "Invalid settings fields", errors: parsed.error.flatten() });
     const settings = await storage.updateSettings(parsed.data);
     const changedKeys = Object.keys(parsed.data).join(", ");
     addLog(userId, "info", "Settings", `Updated settings: ${changedKeys}`);
     res.json(settings);
-  });
+  };
+
+  app.put("/api/settings", requireAuth, handleSettingsUpdate);
+  app.patch("/api/settings", requireAuth, handleSettingsUpdate);
 
   app.get("/api/contacts", requireAuth, (req, res) => {
     const storage = getUserStorage(req);
