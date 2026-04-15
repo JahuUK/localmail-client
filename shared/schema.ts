@@ -114,6 +114,7 @@ export const generalSettingsSchema = z.object({
   darkMode: z.boolean().default(false),
   mobileShowTagRow: z.boolean().default(true),
   blockTrackingPixels: z.boolean().default(true),
+  showTrackingPixelNotice: z.boolean().default(true),
   confirmExternalLinks: z.boolean().default(true),
   trustedDomains: z.array(z.string()).default([]),
   warnDangerousAttachments: z.boolean().default(true),

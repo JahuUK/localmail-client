@@ -184,6 +184,7 @@ export class UserStorage {
       darkMode: false,
       mobileShowTagRow: true,
       blockTrackingPixels: true,
+      showTrackingPixelNotice: true,
       confirmExternalLinks: true,
       trustedDomains: [],
       warnDangerousAttachments: true,

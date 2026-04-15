@@ -296,12 +296,18 @@ export async function restoreBackup(userId: string, zipPath: string): Promise<{ 
   }
 }
 
-const backupTimers: Map<string, ReturnType<typeof setInterval>> = new Map();
+const backupTimers: Map<string, ReturnType<typeof setTimeout>> = new Map();
+const nextBackupTimes: Map<string, number> = new Map();
+
+export function getNextBackupTime(userId: string): number | null {
+  return nextBackupTimes.get(userId) ?? null;
+}
 
 export function startScheduledBackup(
   userId: string,
   config: BackupConfig,
-  onLog: (level: string, message: string) => void
+  onLog: (level: string, message: string) => void,
+  onComplete?: (success: boolean, message: string) => void | Promise<void>
 ) {
   stopScheduledBackup(userId);
 
@@ -315,9 +321,8 @@ export function startScheduledBackup(
 
   if (!intervalMs) return;
 
-  onLog("info", `Scheduled ${config.schedule} backup to ${config.provider.toUpperCase()} started`);
-
-  const timer = setInterval(async () => {
+  const runJob = async () => {
+    nextBackupTimes.delete(userId);
     onLog("info", `Running scheduled ${config.schedule} backup to ${config.provider.toUpperCase()}...`);
     const result = await runBackup(userId, config);
     if (result.success) {
@@ -325,15 +330,54 @@ export function startScheduledBackup(
     } else {
       onLog("error", `Scheduled backup failed: ${result.message}`);
     }
-  }, intervalMs);
+    if (onComplete) {
+      try { await onComplete(result.success, result.message); } catch {}
+    }
+  };
 
-  backupTimers.set(userId, timer);
+  const scheduleRecurring = () => {
+    const nextAt = Date.now() + intervalMs;
+    nextBackupTimes.set(userId, nextAt);
+    const timer = setInterval(async () => {
+      await runJob();
+      nextBackupTimes.set(userId, Date.now() + intervalMs);
+    }, intervalMs);
+    backupTimers.set(userId, timer);
+  };
+
+  // Calculate how long until the first run based on when the last backup happened.
+  // This ensures the schedule survives server restarts correctly.
+  const lastBackupTime = config.lastBackup ? new Date(config.lastBackup).getTime() : null;
+  const elapsed = lastBackupTime ? Date.now() - lastBackupTime : intervalMs;
+  const timeUntilFirst = Math.max(0, intervalMs - elapsed);
+  const nextAt = Date.now() + timeUntilFirst;
+  nextBackupTimes.set(userId, nextAt);
+
+  const readableWait = timeUntilFirst < 60000
+    ? "less than a minute"
+    : timeUntilFirst < 3600000
+      ? `${Math.round(timeUntilFirst / 60000)} minutes`
+      : `${Math.round(timeUntilFirst / 3600000)} hours`;
+  onLog("info", `Scheduled ${config.schedule} backup armed — next run in ${readableWait} (${new Date(nextAt).toLocaleString()})`);
+
+  if (timeUntilFirst === 0) {
+    // Overdue — run immediately then switch to recurring interval
+    runJob().then(scheduleRecurring);
+  } else {
+    // Wait the remaining time, then start the recurring interval
+    const initial = setTimeout(() => {
+      runJob().then(scheduleRecurring);
+    }, timeUntilFirst);
+    backupTimers.set(userId, initial);
+  }
 }
 
 export function stopScheduledBackup(userId: string) {
   const existing = backupTimers.get(userId);
   if (existing) {
+    clearTimeout(existing);
     clearInterval(existing);
     backupTimers.delete(userId);
   }
+  nextBackupTimes.delete(userId);
 }

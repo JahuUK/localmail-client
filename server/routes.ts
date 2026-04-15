@@ -3,7 +3,7 @@ import { createServer, type Server } from "http";
 import { globalStorage, verifyPassword, rehashIfNeeded, type UserStorage } from "./storage";
 import { insertMailAccountSchema, composeEmailSchema, insertLabelSchema, generalSettingsSchema, insertCustomFolderSchema, insertEmailRuleSchema, backupConfigSchema, type Email } from "@shared/schema";
 import { fetchEmails, sendSmtpEmail, testIncomingConnection, testSmtpConnection, saveAttachmentsToDisk, getAttachmentPath } from "./mail";
-import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, startScheduledBackup, stopScheduledBackup, createBackupArchive } from "./backup";
+import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, startScheduledBackup, stopScheduledBackup, createBackupArchive, getNextBackupTime } from "./backup";
 import { resolve } from "path";
 import multer from "multer";
 import { existsSync, mkdirSync, unlinkSync } from "fs";
@@ -269,9 +269,22 @@ async function initScheduledBackups() {
       const storage = globalStorage.getUserStorage(user.id);
       const config = storage.getDecryptedBackupConfig();
       if (config && config.enabled && config.schedule !== "manual") {
-        startScheduledBackup(user.id, config, (level, message) => {
-          addLog(user.id, level as any, "Backup", message);
-        });
+        startScheduledBackup(
+          user.id,
+          config,
+          (level, message) => { addLog(user.id, level as any, "Backup", message); },
+          async (success, message) => {
+            try {
+              const existing = storage.getBackupConfig();
+              if (existing) {
+                existing.lastBackup = new Date().toISOString();
+                existing.lastBackupStatus = success ? "success" : "failed";
+                existing.lastBackupMessage = message;
+                await storage.updateBackupConfig(existing);
+              }
+            } catch {}
+          }
+        );
       }
     } catch {}
   }
@@ -1301,6 +1314,12 @@ export async function registerRoutes(
     res.json(safe);
   });
 
+  app.get("/api/backup/status", requireAuth, (req, res) => {
+    const userId = req.session.userId!;
+    const nextAt = getNextBackupTime(userId);
+    res.json({ nextBackupAt: nextAt ? new Date(nextAt).toISOString() : null, active: nextAt !== null });
+  });
+
   app.post("/api/backup/config", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
     const userId = req.session.userId!;
@@ -1318,9 +1337,22 @@ export async function registerRoutes(
 
     const decrypted = storage.getDecryptedBackupConfig();
     if (decrypted && decrypted.enabled && decrypted.schedule !== "manual") {
-      startScheduledBackup(userId, decrypted, (level, message) => {
-        addLog(userId, level as any, "Backup", message);
-      });
+      startScheduledBackup(
+        userId,
+        decrypted,
+        (level, message) => { addLog(userId, level as any, "Backup", message); },
+        async (success, message) => {
+          try {
+            const existing = storage.getBackupConfig();
+            if (existing) {
+              existing.lastBackup = new Date().toISOString();
+              existing.lastBackupStatus = success ? "success" : "failed";
+              existing.lastBackupMessage = message;
+              await storage.updateBackupConfig(existing);
+            }
+          } catch {}
+        }
+      );
     } else {
       stopScheduledBackup(userId);
     }

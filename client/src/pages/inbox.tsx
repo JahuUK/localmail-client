@@ -85,7 +85,7 @@ import {
   Smartphone,
   AlertTriangle,
 } from "lucide-react";
-import { format, isToday, isThisYear } from "date-fns";
+import { format, isToday, isThisYear, formatDistanceToNow } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
 
 import { Button } from "@/components/ui/button";
@@ -2111,7 +2111,7 @@ function ThreadEmailCard({
             </div>
           ) : (
             <div className="px-6 py-4">
-              {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && (
+              {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && settingsQuery.data?.showTrackingPixelNotice !== false && (
                 <div className="flex items-center gap-2 mb-3 px-3 py-2 rounded-lg bg-[#e8f5e9] border border-[#c8e6c9] text-[#2e7d32] text-xs font-medium" data-testid={`banner-tracking-blocked-thread-${email.id}`}>
                   <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0" />
                   {fullEmail.trackingPixelsBlocked} tracking pixel{fullEmail.trackingPixelsBlocked !== 1 ? "s" : ""} blocked
@@ -2898,7 +2898,7 @@ function EmailView({
       </div>
 
       {/* Tracking pixel badge */}
-      {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && (
+      {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && settingsQuery.data?.showTrackingPixelNotice !== false && (
         <div className="flex items-center gap-2 px-4 py-2 bg-[#e8f5e9] border-b border-[#c8e6c9] text-[#2e7d32] text-xs font-medium no-print" data-testid="banner-tracking-blocked">
           <ShieldCheck className="h-3.5 w-3.5 flex-shrink-0" />
           {fullEmail.trackingPixelsBlocked} tracking pixel{fullEmail.trackingPixelsBlocked !== 1 ? "s" : ""} blocked — sender cannot see if or when you opened this email.
@@ -4647,7 +4647,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.1"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4660,8 +4660,18 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.5",
+      version: "v0.8.5.1",
       label: "Latest",
+      date: "April 2026",
+      summary: "Settings polish — dismissible tracking pixel notice, cleaner Security panel",
+      items: [
+        "Tracking pixel notice can now be permanently dismissed via a toggle in Security settings — it stays off across sessions",
+        "Removed the 'Incoming email protection' section header from Security settings; defences are listed directly",
+      ],
+    },
+    {
+      version: "v0.8.5",
+      label: "",
       date: "April 2026",
       summary: "Performance and security — virtualised email list, strict settings validation",
       items: [
@@ -4849,7 +4859,7 @@ function AboutPanel() {
         </div>
         <div>
           <h2 className="text-xl font-semibold text-[#202124]">LocalMail</h2>
-          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.5</p>
+          <p className="text-xs text-[#5f6368] mt-0.5">Current version: v0.8.5.1</p>
           <p className="text-sm text-[#3c4043] mt-2 leading-relaxed max-w-[560px]">
             A locally-hosted email client, inspired by Gmail, with POP3/IMAP/SMTP support. All emails and settings encrypted at rest.
           </p>
@@ -5967,25 +5977,29 @@ function SecurityPanel() {
     <div className="p-8 max-w-[700px] space-y-7">
       <PanelHeader title="Security" subtitle="Protect your privacy and guard against threats in incoming emails" isPending={isPending} />
 
-      <SettingSection label="Incoming email protection" description="Defences applied automatically when you open or fetch emails">
-        <SettingRow label="Block tracking pixels" description="Silently remove invisible 1×1 images senders embed to detect if and when you open their email. When blocked, a green notice appears in the email and the event is recorded in the Activity Log.">
-          <button onClick={() => update({ blockTrackingPixels: !(s.blockTrackingPixels !== false) })} className={TOGGLE(s.blockTrackingPixels !== false)} data-testid="toggle-block-tracking-pixels">
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.blockTrackingPixels !== false ? "left-6" : "left-1"}`} />
-          </button>
-        </SettingRow>
+      <SettingRow label="Block tracking pixels" description="Silently remove invisible 1×1 images senders embed to detect if and when you open their email.">
+        <button onClick={() => update({ blockTrackingPixels: !(s.blockTrackingPixels !== false) })} className={TOGGLE(s.blockTrackingPixels !== false)} data-testid="toggle-block-tracking-pixels">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.blockTrackingPixels !== false ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
 
-        <SettingRow label="Confirm external links" description="Show a confirmation dialog before opening any link in an email. You can trust specific domains to skip the prompt for them.">
-          <button onClick={() => update({ confirmExternalLinks: !(s.confirmExternalLinks !== false) })} className={TOGGLE(s.confirmExternalLinks !== false)} data-testid="toggle-confirm-external-links">
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.confirmExternalLinks !== false ? "left-6" : "left-1"}`} />
-          </button>
-        </SettingRow>
+      <SettingRow label="Show tracking blocked notice" description="Display a green notice inside an email when tracking pixels were found and removed.">
+        <button onClick={() => update({ showTrackingPixelNotice: !(s.showTrackingPixelNotice !== false) })} className={TOGGLE(s.showTrackingPixelNotice !== false)} data-testid="toggle-show-tracking-notice">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.showTrackingPixelNotice !== false ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
 
-        <SettingRow label="Warn on dangerous attachments" description="Highlight attachments with executable or script file types (e.g. .exe, .bat, .ps1, .js) that could run malicious code.">
-          <button onClick={() => update({ warnDangerousAttachments: !(s.warnDangerousAttachments !== false) })} className={TOGGLE(s.warnDangerousAttachments !== false)} data-testid="toggle-warn-dangerous-attachments">
-            <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.warnDangerousAttachments !== false ? "left-6" : "left-1"}`} />
-          </button>
-        </SettingRow>
-      </SettingSection>
+      <SettingRow label="Confirm external links" description="Show a confirmation dialog before opening any link in an email. You can trust specific domains to skip the prompt for them.">
+        <button onClick={() => update({ confirmExternalLinks: !(s.confirmExternalLinks !== false) })} className={TOGGLE(s.confirmExternalLinks !== false)} data-testid="toggle-confirm-external-links">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.confirmExternalLinks !== false ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
+
+      <SettingRow label="Warn on dangerous attachments" description="Highlight attachments with executable or script file types (e.g. .exe, .bat, .ps1, .js) that could run malicious code.">
+        <button onClick={() => update({ warnDangerousAttachments: !(s.warnDangerousAttachments !== false) })} className={TOGGLE(s.warnDangerousAttachments !== false)} data-testid="toggle-warn-dangerous-attachments">
+          <div className={`w-4 h-4 bg-white rounded-full absolute top-1 shadow-sm transition-all ${s.warnDangerousAttachments !== false ? "left-6" : "left-1"}`} />
+        </button>
+      </SettingRow>
 
       {s.confirmExternalLinks !== false && (
         <SettingSection label="Trusted domains" description="Links to these domains will open directly without confirmation. Domains are added automatically when you click 'Don't warn me again' in the link dialog.">
@@ -6570,6 +6584,17 @@ function BackupSettings() {
     queryKey: ["/api/backup/config"],
   });
 
+  const statusQuery = useQuery<{ nextBackupAt: string | null; active: boolean }>({
+    queryKey: ["/api/backup/status"],
+    refetchInterval: 60000,
+  });
+
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 60000);
+    return () => clearInterval(t);
+  }, []);
+
   const backupsQuery = useQuery<{ name: string; size: number; lastModified: string }[]>({
     queryKey: ["/api/backup/list"],
     enabled: loaded,
@@ -6620,6 +6645,7 @@ function BackupSettings() {
       await apiRequest("POST", "/api/backup/config", buildConfig());
       toast({ title: "Backup configuration saved" });
       queryClient.invalidateQueries({ queryKey: ["/api/backup/config"] });
+      setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/backup/status"] }), 500);
     } catch (err: any) {
       toast({ title: "Failed to save", description: err.message, variant: "destructive" });
     } finally {
@@ -6861,6 +6887,27 @@ function BackupSettings() {
             </select>
           )}
         </div>
+
+        {statusQuery.data?.active && statusQuery.data.nextBackupAt && (() => {
+          const nextMs = new Date(statusQuery.data!.nextBackupAt!).getTime();
+          const msLeft = nextMs - nowTick;
+          const hoursLeft = Math.floor(msLeft / 3600000);
+          const minsLeft = Math.floor((msLeft % 3600000) / 60000);
+          const timeLabel = msLeft < 60000
+            ? "less than a minute"
+            : hoursLeft > 0
+              ? `${hoursLeft}h ${minsLeft}m`
+              : `${minsLeft}m`;
+          return (
+            <div className="flex items-center gap-2 px-3 py-2 bg-[#e8f0fe] border border-[#c5d8fd] rounded-lg text-xs text-[#1a73e8]" data-testid="next-backup-timer">
+              <Clock className="h-3.5 w-3.5 flex-shrink-0" />
+              <span>
+                Next scheduled backup in <strong>{timeLabel}</strong>
+                <span className="text-[#5f6368] ml-1">({format(new Date(statusQuery.data!.nextBackupAt!), "MMM d 'at' h:mm a")})</span>
+              </span>
+            </div>
+          );
+        })()}
 
         <div className="flex items-center gap-2 pt-2">
           <Button onClick={handleSave} disabled={saving} className="bg-[#1a73e8] text-white hover:bg-[#1557b0]" data-testid="button-backup-save">
