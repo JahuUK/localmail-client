@@ -415,18 +415,14 @@ async function parseRawEmail(rawSource: string | Buffer): Promise<ParsedEmailRes
   const body = parsed.text || parsed.html?.replace(/<[^>]+>/g, "") || "";
   const bodyHtml = parsed.html || undefined;
 
+  // Used below to test whether a CID is actually referenced as an inline resource.
+  // Outlook (and some other clients) stamp CIDs on ALL MIME parts including real file
+  // attachments. A CID that does not appear in the HTML body is NOT an inline image —
+  // it is a regular attachment and must be treated as such.
+  const htmlBodyLower = (parsed.html || "").toLowerCase();
+
   const rawAttachments: ParsedAttachment[] = [];
   const attachmentMeta: EmailAttachment[] = [];
-
-  // Debug: log every MIME part mailparser found so we can trace missing attachments
-  if (parsed.attachments) {
-    for (const a of parsed.attachments) {
-      console.log(
-        `[parseRawEmail] MIME part: type="${a.contentType}" filename="${a.filename ?? ""}" ` +
-        `cid="${a.cid ?? ""}" size=${a.size ?? 0} content=${a.content ? `Buffer(${(a.content as Buffer).length})` : "null"}`
-      );
-    }
-  }
 
   if (parsed.attachments && parsed.attachments.length > 0) {
     for (const att of parsed.attachments) {
@@ -460,7 +456,20 @@ async function parseRawEmail(rawSource: string | Buffer): Promise<ParsedEmailRes
       const id = randomUUID();
       const filename = att.filename || "attachment";
       const size = att.size || (att.content as Buffer).length;
-      const cid = att.cid || undefined;
+
+      // Only treat this attachment as inline if its CID is actually referenced in the
+      // HTML body (e.g. <img src="cid:xxxx">). Outlook stamps CIDs on every MIME part
+      // including .docx and .pdf files, which must still be shown as file attachments.
+      const rawCid: string | undefined = att.cid || undefined;
+      let cid: string | undefined;
+      if (rawCid) {
+        // Check both the full CID and the local part before the first '@'
+        const localPart = rawCid.split("@")[0].toLowerCase();
+        const isInlineRef =
+          htmlBodyLower.includes(`cid:${rawCid.toLowerCase()}`) ||
+          htmlBodyLower.includes(`cid:${localPart}`);
+        cid = isInlineRef ? rawCid : undefined;
+      }
 
       rawAttachments.push({ id, filename, contentType, size, cid, content: att.content as Buffer });
       attachmentMeta.push({ id, filename, contentType, size, ...(cid ? { cid } : {}) });
