@@ -3104,7 +3104,7 @@ function EmailView({
                   )}
                 </div>
                 <div className="text-xs text-[#5f6368] truncate">
-                  to {fullEmail.accountEmail || fullEmail.to.map(t => t.name || t.email).join(", ")}
+                  to {(fullEmail.to && fullEmail.to.length > 0 ? fullEmail.to.map((t: {name: string; email: string}) => t.name || t.email).join(", ") : fullEmail.accountEmail) || ""}
                 </div>
               </div>
             </div>
@@ -3470,6 +3470,7 @@ function InlineReplyComposer({
               className="flex-1 text-sm outline-none"
               placeholder="Recipients"
               data-testid="input-inline-to"
+              autoComplete="off"
             />
             {!showCcBcc && (
               <button onClick={() => setShowCcBcc(true)} className="text-xs text-[#5f6368] hover:text-[#202124] ml-2 whitespace-nowrap" data-testid="button-inline-cc-bcc">
@@ -3495,7 +3496,7 @@ function InlineReplyComposer({
             <>
               <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
                 <span className="text-sm text-[#5f6368] w-12">Cc</span>
-                <input value={cc} onChange={(e) => handleContactFieldChange("cc", e.target.value)} onFocus={() => setActiveContactField("cc")} onBlur={() => setTimeout(() => { if (activeContactField === "cc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" data-testid="input-inline-cc" />
+                <input value={cc} onChange={(e) => handleContactFieldChange("cc", e.target.value)} onFocus={() => setActiveContactField("cc")} onBlur={() => setTimeout(() => { if (activeContactField === "cc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" autoComplete="off" data-testid="input-inline-cc" />
                 {activeContactField === "cc" && contactSuggestions.length > 0 && (
                   <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
                     {contactSuggestions.map((c, i) => (
@@ -3512,7 +3513,7 @@ function InlineReplyComposer({
               </div>
               <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
                 <span className="text-sm text-[#5f6368] w-12">Bcc</span>
-                <input value={bcc} onChange={(e) => handleContactFieldChange("bcc", e.target.value)} onFocus={() => setActiveContactField("bcc")} onBlur={() => setTimeout(() => { if (activeContactField === "bcc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" data-testid="input-inline-bcc" />
+                <input value={bcc} onChange={(e) => handleContactFieldChange("bcc", e.target.value)} onFocus={() => setActiveContactField("bcc")} onBlur={() => setTimeout(() => { if (activeContactField === "bcc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" autoComplete="off" data-testid="input-inline-bcc" />
                 {activeContactField === "bcc" && contactSuggestions.length > 0 && (
                   <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
                     {contactSuggestions.map((c, i) => (
@@ -4217,6 +4218,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
               className="flex-1 text-sm outline-none"
               placeholder="Recipients"
               autoFocus={!defaults?.to}
+              autoComplete="off"
               data-testid="input-compose-to"
             />
             {!showCcBcc && (
@@ -4254,6 +4256,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
                   onBlur={() => setTimeout(() => { if (activeContactField === "cc") setContactSuggestions([]); }, 200)}
                   className="flex-1 text-sm outline-none"
                   placeholder=""
+                  autoComplete="off"
                   data-testid="input-compose-cc"
                 />
                 {activeContactField === "cc" && contactSuggestions.length > 0 && (
@@ -4279,6 +4282,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
                   onBlur={() => setTimeout(() => { if (activeContactField === "bcc") setContactSuggestions([]); }, 200)}
                   className="flex-1 text-sm outline-none"
                   placeholder=""
+                  autoComplete="off"
                   data-testid="input-compose-bcc"
                 />
                 {activeContactField === "bcc" && contactSuggestions.length > 0 && (
@@ -4696,7 +4700,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.1"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.3"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4709,8 +4713,33 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.5.1",
+      version: "v0.8.5.3",
       label: "Latest",
+      date: "April 2026",
+      summary: "Sent email display fix — recipient address now shown correctly in message header",
+      items: [
+        "Fixed: opening a sent email showed your own sending account address in the 'to' line instead of the actual recipient",
+        "Root cause: the header used accountEmail (the sending account) with higher priority than the actual to recipients — reversed so actual recipients always display first",
+        "Added autoComplete=\"off\" to all To, Cc and Bcc inputs to prevent browser autofill interfering with manually typed addresses",
+        "Removed 'This is your own account' warnings from compose (unnecessary for experienced users)",
+      ],
+    },
+    {
+      version: "v0.8.5.2",
+      label: "",
+      date: "April 2026",
+      summary: "Attachment detection fix — Outlook-style CID stamps no longer hide file attachments",
+      items: [
+        "Fixed: .pdf, .docx and other file attachments were invisible when sent from Outlook, which stamps a Content-ID on every MIME part including real attachments",
+        "Parser now checks whether a CID is actually referenced in the HTML body before treating it as an inline image — unreferenced CIDs are correctly shown as file attachments",
+        "Re-download from server now immediately updates the email view without a page reload",
+        "Added a visible progress banner while a re-download is in progress",
+        "Re-download toast now accurately reports file attachments vs inline-only images",
+      ],
+    },
+    {
+      version: "v0.8.5.1",
+      label: "",
       date: "April 2026",
       summary: "Settings polish — dismissible tracking pixel notice, cleaner Security panel",
       items: [

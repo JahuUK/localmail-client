@@ -1249,17 +1249,6 @@ export async function registerRoutes(
 
       const result = results[0];
 
-      // Log every MIME part found so we can diagnose missing attachments
-      if (result.rawAttachments.length > 0) {
-        for (const a of result.rawAttachments) {
-          addLog(userId, "info", "Re-download",
-            `  MIME part: type="${a.contentType}" filename="${a.filename}" cid=${a.cid ?? "none"} size=${a.size} contentBytes=${(a.content as Buffer)?.length ?? "null"}`
-          );
-        }
-      } else {
-        addLog(userId, "info", "Re-download", "  No MIME attachments returned by parser");
-      }
-
       const updated = await storage.updateEmail(email.id, {
         body: result.email.body,
         bodyHtml: result.email.bodyHtml,
