@@ -418,6 +418,16 @@ async function parseRawEmail(rawSource: string | Buffer): Promise<ParsedEmailRes
   const rawAttachments: ParsedAttachment[] = [];
   const attachmentMeta: EmailAttachment[] = [];
 
+  // Debug: log every MIME part mailparser found so we can trace missing attachments
+  if (parsed.attachments) {
+    for (const a of parsed.attachments) {
+      console.log(
+        `[parseRawEmail] MIME part: type="${a.contentType}" filename="${a.filename ?? ""}" ` +
+        `cid="${a.cid ?? ""}" size=${a.size ?? 0} content=${a.content ? `Buffer(${(a.content as Buffer).length})` : "null"}`
+      );
+    }
+  }
+
   if (parsed.attachments && parsed.attachments.length > 0) {
     for (const att of parsed.attachments) {
       // Guard: skip parts with no decoded content to avoid crashes

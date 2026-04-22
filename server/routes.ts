@@ -1248,6 +1248,18 @@ export async function registerRoutes(
       }
 
       const result = results[0];
+
+      // Log every MIME part found so we can diagnose missing attachments
+      if (result.rawAttachments.length > 0) {
+        for (const a of result.rawAttachments) {
+          addLog(userId, "info", "Re-download",
+            `  MIME part: type="${a.contentType}" filename="${a.filename}" cid=${a.cid ?? "none"} size=${a.size} contentBytes=${(a.content as Buffer)?.length ?? "null"}`
+          );
+        }
+      } else {
+        addLog(userId, "info", "Re-download", "  No MIME attachments returned by parser");
+      }
+
       const updated = await storage.updateEmail(email.id, {
         body: result.email.body,
         bodyHtml: result.email.bodyHtml,
@@ -1259,7 +1271,14 @@ export async function registerRoutes(
         saveAttachmentsToDisk(email.id, result.rawAttachments, storage.getAttachmentsDir());
       }
 
-      const attMsg = result.rawAttachments.length > 0 ? ` with ${result.rawAttachments.length} attachment(s)` : " (no attachments found)";
+      // Only count non-inline parts as visible attachments for the user-facing message
+      const visibleAtts = result.rawAttachments.filter(a => !a.cid);
+      const inlineAtts = result.rawAttachments.filter(a => !!a.cid);
+      const attMsg = visibleAtts.length > 0
+        ? ` with ${visibleAtts.length} attachment(s)`
+        : inlineAtts.length > 0
+          ? ` (only inline images found — file attachments may be missing from this email on the server)`
+          : " (no attachments found on server)";
       addLog(userId, "success", "Re-download", `Re-downloaded "${email.subject}"${attMsg}`);
       res.json({ message: `Email re-downloaded successfully${attMsg}`, email: updated });
     } catch (err: any) {
