@@ -84,7 +84,6 @@ import {
   Sparkles,
   Smartphone,
   AlertTriangle,
-  Wrench,
 } from "lucide-react";
 import { format, isToday, isThisYear, formatDistanceToNow } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -2562,6 +2561,26 @@ function EmailView({
   const trustedDomains: string[] = settingsQuery.data?.trustedDomains || [];
 
   const queryClient = useQueryClient();
+  const { toast: emailViewToast } = useToast();
+  const [isRedownloading, setIsRedownloading] = useState(false);
+
+  const handleRedownload = async () => {
+    setIsRedownloading(true);
+    setMoreMenuOpen(false);
+    try {
+      const res = await apiRequest("POST", `/api/emails/${email.id}/redownload`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.message || "Re-download failed");
+      queryClient.invalidateQueries({ queryKey: [`/api/emails/${email.id}`] });
+      queryClient.invalidateQueries({ queryKey: ["/api/emails"] });
+      emailViewToast({ title: data.message });
+    } catch (err: any) {
+      emailViewToast({ title: "Re-download failed", description: err.message, variant: "destructive" });
+    } finally {
+      setIsRedownloading(false);
+    }
+  };
+
   const addTrustedDomainMutation = useMutation({
     mutationFn: async (domain: string) => {
       const current: string[] = settingsQuery.data?.trustedDomains || [];
@@ -2893,6 +2912,23 @@ function EmailView({
                 <Printer className="h-4 w-4 flex-shrink-0" />
                 Print
               </button>
+              {email.accountEmail && email.messageId && (
+                <>
+                  <div className="border-t border-[#e0e0e0] my-1" />
+                  <button
+                    onClick={handleRedownload}
+                    disabled={isRedownloading}
+                    className="w-full text-left px-3 py-1.5 text-sm text-[#3c4043] hover:bg-[#f1f3f4] flex items-center gap-3 disabled:opacity-50"
+                    data-testid="menu-redownload"
+                  >
+                    {isRedownloading
+                      ? <Loader2 className="h-4 w-4 flex-shrink-0 animate-spin" />
+                      : <RefreshCw className="h-4 w-4 flex-shrink-0" />
+                    }
+                    Re-download from server
+                  </button>
+                </>
+              )}
             </div>
           )}
         </div>
@@ -5181,21 +5217,6 @@ function MyAccountsPanel() {
   };
 
   const [fetchingAccounts, setFetchingAccounts] = useState<Set<string>>(new Set());
-  const [repairingAccounts, setRepairingAccounts] = useState<Set<string>>(new Set());
-
-  const repairAccount = async (id: string) => {
-    setRepairingAccounts(prev => new Set(prev).add(id));
-    try {
-      const res = await apiRequest("POST", `/api/accounts/${id}/repair-attachments`);
-      const data = await res.json();
-      queryClient.invalidateQueries();
-      toast({ title: data.message });
-    } catch (err: any) {
-      toast({ title: "Repair failed", description: err.message, variant: "destructive" });
-    } finally {
-      setRepairingAccounts(prev => { const next = new Set(prev); next.delete(id); return next; });
-    }
-  };
 
   const fetchAccount = async (id: string) => {
     setFetchingAccounts(prev => new Set(prev).add(id));
@@ -5435,21 +5456,6 @@ function MyAccountsPanel() {
                         <CheckCircle className="h-3 w-3 mr-1" />
                       )}
                       Test
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => repairAccount(account.id)}
-                      disabled={repairingAccounts.has(account.id)}
-                      title="Re-fetch the most recent emails from the server and restore any missing attachments"
-                      data-testid={`button-repair-attachments-${account.id}`}
-                    >
-                      {repairingAccounts.has(account.id) ? (
-                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                      ) : (
-                        <Wrench className="h-3 w-3 mr-1" />
-                      )}
-                      Repair Attachments
                     </Button>
                   </div>
 

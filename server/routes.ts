@@ -1228,6 +1228,46 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/emails/:id/redownload", requireAuth, async (req, res) => {
+    const storage = getUserStorage(req);
+    const userId = req.session.userId!;
+    const email = await storage.getEmail(req.params.id);
+    if (!email) return res.status(404).json({ message: "Email not found" });
+    if (!email.messageId) return res.status(400).json({ message: "This email has no Message-ID and cannot be re-downloaded from the server" });
+    if (!email.accountEmail) return res.status(400).json({ message: "This email is not linked to a mail account" });
+
+    const accounts = await storage.getAccounts();
+    const account = accounts.find(a => a.email === email.accountEmail);
+    if (!account) return res.status(400).json({ message: "The originating mail account is no longer configured" });
+
+    addLog(userId, "info", "Re-download", `Re-downloading email "${email.subject}" via ${(account.protocol || "pop3").toUpperCase()}...`);
+    try {
+      const results = await fetchEmailsByMessageIds(account, [email.messageId]);
+      if (results.length === 0) {
+        return res.status(404).json({ message: "Email not found on server — it may have been deleted from the server since it was first fetched" });
+      }
+
+      const result = results[0];
+      const updated = await storage.updateEmail(email.id, {
+        body: result.email.body,
+        bodyHtml: result.email.bodyHtml,
+        snippet: result.email.snippet,
+        attachments: result.email.attachments,
+      });
+
+      if (result.rawAttachments.length > 0) {
+        saveAttachmentsToDisk(email.id, result.rawAttachments, storage.getAttachmentsDir());
+      }
+
+      const attMsg = result.rawAttachments.length > 0 ? ` with ${result.rawAttachments.length} attachment(s)` : " (no attachments found)";
+      addLog(userId, "success", "Re-download", `Re-downloaded "${email.subject}"${attMsg}`);
+      res.json({ message: `Email re-downloaded successfully${attMsg}`, email: updated });
+    } catch (err: any) {
+      addLog(userId, "error", "Re-download", `Re-download failed for "${email.subject}": ${err.message}`);
+      res.status(500).json({ message: `Re-download failed: ${err.message}` });
+    }
+  });
+
   app.post("/api/accounts/:id/repair-attachments", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
     const userId = req.session.userId!;
