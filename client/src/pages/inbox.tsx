@@ -2571,7 +2571,11 @@ function EmailView({
       const res = await apiRequest("POST", `/api/emails/${email.id}/redownload`);
       const data = await res.json();
       if (!res.ok) throw new Error(data.message || "Re-download failed");
-      queryClient.invalidateQueries({ queryKey: [`/api/emails/${email.id}`] });
+      // Push the fresh email directly into the cache so the view updates immediately
+      // without waiting for a background refetch
+      if (data.email) {
+        queryClient.setQueryData([`/api/emails/${email.id}`], data.email);
+      }
       queryClient.invalidateQueries({ queryKey: ["/api/emails"] });
       emailViewToast({ title: data.message });
     } catch (err: any) {
@@ -2933,6 +2937,14 @@ function EmailView({
           )}
         </div>
       </div>
+
+      {/* Re-download in-progress banner */}
+      {isRedownloading && (
+        <div className="flex items-center gap-2 px-4 py-2.5 bg-[#e8f0fd] border-b border-[#c5d8f6] text-[#1a73e8] text-xs font-medium no-print" data-testid="banner-redownloading">
+          <Loader2 className="h-3.5 w-3.5 flex-shrink-0 animate-spin" />
+          Re-downloading email from server — this may take a moment...
+        </div>
+      )}
 
       {/* Tracking pixel badge */}
       {(fullEmail.trackingPixelsBlocked ?? 0) > 0 && settingsQuery.data?.showTrackingPixelNotice !== false && (
