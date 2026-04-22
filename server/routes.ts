@@ -2,7 +2,7 @@ import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { globalStorage, verifyPassword, rehashIfNeeded, type UserStorage } from "./storage";
 import { insertMailAccountSchema, composeEmailSchema, insertLabelSchema, generalSettingsSchema, insertCustomFolderSchema, insertEmailRuleSchema, backupConfigSchema, type Email } from "@shared/schema";
-import { fetchEmails, sendSmtpEmail, testIncomingConnection, testSmtpConnection, saveAttachmentsToDisk, getAttachmentPath } from "./mail";
+import { fetchEmails, fetchEmailsByMessageIds, sendSmtpEmail, testIncomingConnection, testSmtpConnection, saveAttachmentsToDisk, getAttachmentPath } from "./mail";
 import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, startScheduledBackup, stopScheduledBackup, createBackupArchive, getNextBackupTime } from "./backup";
 import { resolve } from "path";
 import multer from "multer";
@@ -1235,26 +1235,40 @@ export async function registerRoutes(
     if (!account) return res.status(404).json({ message: "Account not found" });
 
     const proto = (account.protocol || "pop3").toUpperCase();
-    addLog(userId, "info", "Repair", `Starting attachment repair for ${account.email} via ${proto}...`);
-    try {
-      const results = await fetchEmails(account);
-      let repaired = 0;
 
+    // Find every email for this account that is currently missing attachments
+    const candidates = storage.getEmailsNeedingAttachmentRepair(account.email);
+    if (candidates.length === 0) {
+      return res.json({ message: "No emails are missing attachments for this account", repaired: 0, checked: 0 });
+    }
+
+    addLog(userId, "info", "Repair", `Found ${candidates.length} email(s) missing attachments for ${account.email}. Searching server via ${proto}...`);
+    try {
+      const messageIds = candidates.map(c => c.messageId);
+
+      // Targeted fetch — IMAP uses SEARCH HEADER, POP3 scans the full mailbox.
+      // Neither is limited to the 20-message window used by normal fetches.
+      const results = await fetchEmailsByMessageIds(account, messageIds);
+
+      let repaired = 0;
       for (const result of results) {
         if (!result.email.messageId || result.rawAttachments.length === 0) continue;
 
         const existing = storage.getEmailIndexByMessageId(result.email.messageId);
-        if (!existing || existing.hasAttachments) continue;
+        if (!existing) continue;
 
+        // Overwrite regardless of current hasAttachments state
         await storage.updateEmail(existing.id, { attachments: result.email.attachments });
         saveAttachmentsToDisk(existing.id, result.rawAttachments, storage.getAttachmentsDir());
         addLog(userId, "info", "Repair", `Restored ${result.rawAttachments.length} attachment(s) on email ${existing.id}`);
         repaired++;
       }
 
+      const notFound = candidates.length - results.length;
+      const details = notFound > 0 ? ` (${notFound} not found on server — may have been removed)` : "";
       const msg = repaired > 0
-        ? `Repaired attachments on ${repaired} email${repaired > 1 ? "s" : ""}`
-        : "No emails needed attachment repair";
+        ? `Repaired attachments on ${repaired} email${repaired > 1 ? "s" : ""}${details}`
+        : `No attachments found on server for ${candidates.length} email${candidates.length > 1 ? "s" : ""}${details}`;
       addLog(userId, "success", "Repair", msg);
       res.json({ message: msg, repaired, checked: results.length });
     } catch (err: any) {

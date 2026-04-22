@@ -254,6 +254,116 @@ export async function fetchImapEmails(account: MailAccount): Promise<ParsedEmail
   return results;
 }
 
+/**
+ * Targeted repair fetch — bypasses the normal 20-message window entirely.
+ *
+ * IMAP: issues a SEARCH HEADER Message-ID for each target ID so only those
+ *       specific messages are retrieved, regardless of their position in the
+ *       mailbox.
+ * POP3: downloads *all* messages present on the server and returns only those
+ *       whose parsed Message-ID is in the target set.
+ */
+export async function fetchEmailsByMessageIds(
+  account: MailAccount,
+  messageIds: string[],
+): Promise<ParsedEmailResult[]> {
+  if (messageIds.length === 0) return [];
+  const protocol = (account.protocol || "pop3").toLowerCase();
+  if (protocol === "imap") {
+    return repairFetchImap(account, messageIds);
+  }
+  return repairFetchPop3(account, new Set(messageIds));
+}
+
+async function repairFetchImap(
+  account: MailAccount,
+  messageIds: string[],
+): Promise<ParsedEmailResult[]> {
+  const { ImapFlow } = await import("imapflow");
+  const client = new ImapFlow({
+    host: account.host,
+    port: account.port,
+    secure: account.tls,
+    auth: { user: account.username, pass: account.password },
+    logger: false,
+  });
+
+  const results: ParsedEmailResult[] = [];
+  try {
+    await client.connect();
+    const lock = await client.getMailboxLock("INBOX");
+    try {
+      for (const msgId of messageIds) {
+        try {
+          // Ask the server to find this exact message — works no matter how old it is
+          const seqNos: number[] = await (client as any).search(
+            { header: { "Message-ID": msgId } },
+          );
+          if (!seqNos || seqNos.length === 0) continue;
+
+          for await (const message of client.fetch(seqNos.join(","), {
+            envelope: true,
+            source: true,
+          })) {
+            try {
+              const source = message.source;
+              if (!source?.length) continue;
+              const parsed = await parseRawEmail(source);
+              if (parsed) results.push(parsed);
+            } catch { continue; }
+          }
+        } catch { continue; }
+      }
+    } finally {
+      lock.release();
+    }
+  } finally {
+    try { await client.logout(); } catch {}
+  }
+  return results;
+}
+
+async function repairFetchPop3(
+  account: MailAccount,
+  targetIds: Set<string>,
+): Promise<ParsedEmailResult[]> {
+  const Pop3 = (await import("node-pop3")).default;
+  const pop3 = new Pop3({
+    host: account.host,
+    port: account.port,
+    tls: account.tls,
+    user: account.username,
+    password: account.password,
+  });
+
+  const results: ParsedEmailResult[] = [];
+  try {
+    const list = await pop3.LIST();
+    const messages = Array.isArray(list) ? list : [];
+
+    // Scan ALL messages on the server — no slice limit
+    for (const msg of messages) {
+      try {
+        const msgNum = Number(Array.isArray(msg) ? msg[0] : msg);
+        const raw: unknown = await pop3.RETR(msgNum);
+        const rawSource: Buffer = Buffer.isBuffer(raw)
+          ? raw
+          : Array.isArray(raw)
+            ? Buffer.from((raw as string[]).join("\r\n"))
+            : Buffer.from(String(raw));
+
+        const parsed = await parseRawEmail(rawSource);
+        if (parsed?.email.messageId && targetIds.has(parsed.email.messageId)) {
+          results.push(parsed);
+        }
+      } catch { continue; }
+    }
+  } finally {
+    try { await pop3.QUIT(); } catch {}
+  }
+  return results;
+}
+
 export async function fetchEmails(account: MailAccount): Promise<ParsedEmailResult[]> {
   const protocol = account.protocol || "pop3";
   if (protocol === "imap") {

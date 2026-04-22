@@ -403,6 +403,21 @@ export class UserStorage {
     return undefined;
   }
 
+  /** Returns every email for the given account that is missing attachments and has a known Message-ID. */
+  getEmailsNeedingAttachmentRepair(accountEmail: string): Array<{ id: string; messageId: string }> {
+    const results: Array<{ id: string; messageId: string }> = [];
+    for (const idx of this.emailIndex.values()) {
+      if (
+        idx.accountEmail === accountEmail &&
+        !idx.hasAttachments &&
+        idx.messageId
+      ) {
+        results.push({ id: idx.id, messageId: idx.messageId });
+      }
+    }
+    return results;
+  }
+
   async getEmails(folder?: string): Promise<Email[]> {
     let entries = Array.from(this.emailIndex.values());
     if (folder === "starred") {
