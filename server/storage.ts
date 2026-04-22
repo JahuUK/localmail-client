@@ -395,6 +395,14 @@ export class UserStorage {
     return false;
   }
 
+  getEmailIndexByMessageId(messageId: string): { id: string; hasAttachments: boolean } | undefined {
+    if (!messageId) return undefined;
+    for (const idx of this.emailIndex.values()) {
+      if (idx.messageId === messageId) return { id: idx.id, hasAttachments: idx.hasAttachments || false };
+    }
+    return undefined;
+  }
+
   async getEmails(folder?: string): Promise<Email[]> {
     let entries = Array.from(this.emailIndex.values());
     if (folder === "starred") {

@@ -175,9 +175,15 @@ export async function fetchPop3Emails(account: MailAccount): Promise<ParsedEmail
       try {
         const msgNum = Number(Array.isArray(msg) ? msg[0] : msg);
         const raw: unknown = await pop3.RETR(msgNum);
-        const rawStr = Array.isArray(raw) ? raw.join("\n") : String(raw);
+        // RFC 2822 requires CRLF line endings; join with \r\n if lines were split.
+        // Pass as Buffer so mailparser handles charset detection itself.
+        const rawSource: Buffer = Buffer.isBuffer(raw)
+          ? raw
+          : Array.isArray(raw)
+            ? Buffer.from((raw as string[]).join("\r\n"))
+            : Buffer.from(String(raw));
 
-        const parsed = await parseRawEmail(rawStr);
+        const parsed = await parseRawEmail(rawSource);
         if (parsed) results.push(parsed);
 
         if (account.deleteOnFetch) {
@@ -227,10 +233,12 @@ export async function fetchImapEmails(account: MailAccount): Promise<ParsedEmail
         source: true,
       })) {
         try {
-          const rawStr = message.source?.toString("utf-8");
-          if (!rawStr) continue;
+          const source = message.source;
+          // Pass the Buffer directly — converting to a string first can corrupt
+          // bytes > 127 in headers / 8-bit body parts and break MIME parsing.
+          if (!source?.length) continue;
 
-          const parsed = await parseRawEmail(rawStr);
+          const parsed = await parseRawEmail(source);
           if (parsed) results.push(parsed);
         } catch {
           continue;
@@ -283,9 +291,11 @@ function parseListUnsubscribeHeaders(headers: any): {
   return result;
 }
 
-async function parseRawEmail(rawStr: string): Promise<ParsedEmailResult | null> {
+async function parseRawEmail(rawSource: string | Buffer): Promise<ParsedEmailResult | null> {
   const { simpleParser } = await import("mailparser") as any;
-  const parsed = await (simpleParser as any)(rawStr) as any;
+  // Pass the raw source directly — never pre-convert to a UTF-8 string, as that
+  // corrupts bytes > 127 in headers or 8-bit body parts and breaks MIME parsing.
+  const parsed = await (simpleParser as any)(rawSource) as any;
 
   const senderAddress = parsed.from?.value?.[0];
   const toAddresses: any[] = parsed.to
@@ -300,13 +310,39 @@ async function parseRawEmail(rawStr: string): Promise<ParsedEmailResult | null> 
 
   if (parsed.attachments && parsed.attachments.length > 0) {
     for (const att of parsed.attachments) {
+      // Guard: skip parts with no decoded content to avoid crashes
+      if (!att.content) continue;
+
+      const contentType: string = att.contentType || "application/octet-stream";
+
+      // Recursively extract attachments from forwarded/nested emails
+      // (e.g. when Outlook uses "Forward as Attachment" → message/rfc822 MIME part)
+      if (contentType.startsWith("message/rfc822")) {
+        try {
+          const nested = await parseRawEmail(att.content as Buffer);
+          if (nested) {
+            for (const nestedAtt of nested.rawAttachments) {
+              rawAttachments.push(nestedAtt);
+              attachmentMeta.push({
+                id: nestedAtt.id,
+                filename: nestedAtt.filename,
+                contentType: nestedAtt.contentType,
+                size: nestedAtt.size,
+                ...(nestedAtt.cid ? { cid: nestedAtt.cid } : {}),
+              });
+            }
+          }
+        } catch {}
+        // Don't surface the raw .eml wrapper as a visible attachment
+        continue;
+      }
+
       const id = randomUUID();
       const filename = att.filename || "attachment";
-      const contentType = att.contentType || "application/octet-stream";
-      const size = att.size || att.content.length;
+      const size = att.size || (att.content as Buffer).length;
       const cid = att.cid || undefined;
 
-      rawAttachments.push({ id, filename, contentType, size, cid, content: att.content });
+      rawAttachments.push({ id, filename, contentType, size, cid, content: att.content as Buffer });
       attachmentMeta.push({ id, filename, contentType, size, ...(cid ? { cid } : {}) });
     }
   }

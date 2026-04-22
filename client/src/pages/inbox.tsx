@@ -84,6 +84,7 @@ import {
   Sparkles,
   Smartphone,
   AlertTriangle,
+  Wrench,
 } from "lucide-react";
 import { format, isToday, isThisYear, formatDistanceToNow } from "date-fns";
 import type { Email, Pop3Account, EmailLabel, GeneralSettings, EmailAttachment, MailAccount, CustomFolder, EmailRule, EmailRuleCondition, BackupConfig } from "@shared/schema";
@@ -5180,6 +5181,21 @@ function MyAccountsPanel() {
   };
 
   const [fetchingAccounts, setFetchingAccounts] = useState<Set<string>>(new Set());
+  const [repairingAccounts, setRepairingAccounts] = useState<Set<string>>(new Set());
+
+  const repairAccount = async (id: string) => {
+    setRepairingAccounts(prev => new Set(prev).add(id));
+    try {
+      const res = await apiRequest("POST", `/api/accounts/${id}/repair-attachments`);
+      const data = await res.json();
+      queryClient.invalidateQueries();
+      toast({ title: data.message });
+    } catch (err: any) {
+      toast({ title: "Repair failed", description: err.message, variant: "destructive" });
+    } finally {
+      setRepairingAccounts(prev => { const next = new Set(prev); next.delete(id); return next; });
+    }
+  };
 
   const fetchAccount = async (id: string) => {
     setFetchingAccounts(prev => new Set(prev).add(id));
@@ -5419,6 +5435,21 @@ function MyAccountsPanel() {
                         <CheckCircle className="h-3 w-3 mr-1" />
                       )}
                       Test
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => repairAccount(account.id)}
+                      disabled={repairingAccounts.has(account.id)}
+                      title="Re-fetch the most recent emails from the server and restore any missing attachments"
+                      data-testid={`button-repair-attachments-${account.id}`}
+                    >
+                      {repairingAccounts.has(account.id) ? (
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                      ) : (
+                        <Wrench className="h-3 w-3 mr-1" />
+                      )}
+                      Repair Attachments
                     </Button>
                   </div>
 

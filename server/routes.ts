@@ -1228,6 +1228,41 @@ export async function registerRoutes(
     }
   });
 
+  app.post("/api/accounts/:id/repair-attachments", requireAuth, async (req, res) => {
+    const storage = getUserStorage(req);
+    const userId = req.session.userId!;
+    const account = await storage.getAccount(req.params.id);
+    if (!account) return res.status(404).json({ message: "Account not found" });
+
+    const proto = (account.protocol || "pop3").toUpperCase();
+    addLog(userId, "info", "Repair", `Starting attachment repair for ${account.email} via ${proto}...`);
+    try {
+      const results = await fetchEmails(account);
+      let repaired = 0;
+
+      for (const result of results) {
+        if (!result.email.messageId || result.rawAttachments.length === 0) continue;
+
+        const existing = storage.getEmailIndexByMessageId(result.email.messageId);
+        if (!existing || existing.hasAttachments) continue;
+
+        await storage.updateEmail(existing.id, { attachments: result.email.attachments });
+        saveAttachmentsToDisk(existing.id, result.rawAttachments, storage.getAttachmentsDir());
+        addLog(userId, "info", "Repair", `Restored ${result.rawAttachments.length} attachment(s) on email ${existing.id}`);
+        repaired++;
+      }
+
+      const msg = repaired > 0
+        ? `Repaired attachments on ${repaired} email${repaired > 1 ? "s" : ""}`
+        : "No emails needed attachment repair";
+      addLog(userId, "success", "Repair", msg);
+      res.json({ message: msg, repaired, checked: results.length });
+    } catch (err: any) {
+      addLog(userId, "error", "Repair", `Attachment repair failed for ${account.email}: ${err.message}`);
+      res.status(500).json({ message: `Repair failed: ${err.message}` });
+    }
+  });
+
   app.get("/api/custom-folders", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
     const folders = await storage.getCustomFolders();
