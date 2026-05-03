@@ -4700,7 +4700,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.3"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.4"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4713,8 +4713,21 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.5.3",
+      version: "v0.8.5.4",
       label: "Latest",
+      date: "May 2026",
+      summary: "Label ownership fix — emails fetched via Gmail Mail Fetcher now labelled with the correct receiving account",
+      items: [
+        "Fixed: emails addressed to account A but fetched via account B (e.g. Gmail's built-in 'Check mail from other accounts') were incorrectly labelled with account B",
+        "At fetch time, LocalMail now inspects the To/Cc recipients; if any match a configured account, that account becomes the owner (accountEmail) and primary label",
+        "The fetching account still receives a secondary label on the email so inbox filtering by either account still works",
+        "Same fix applied to both auto-fetch and manual-fetch paths",
+        "Duplicate-message path also applies the correct label when the same message is seen again by a different account",
+      ],
+    },
+    {
+      version: "v0.8.5.3",
+      label: "",
       date: "April 2026",
       summary: "Sent email display fix — recipient address now shown correctly in message header",
       items: [
