@@ -207,41 +207,13 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
       let duplicates = 0;
       for (const result of results) {
         if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
-          // Duplicate — but still apply this account's label and fix accountEmail if this
-          // account is the actual To/Cc recipient (handles server-side email forwarding where
-          // the same message arrives via two accounts but only one label ends up on it)
-          const existing = storage.getEmailIndexByMessageId(result.email.messageId);
-          if (existing) {
-            const existingEmail = await storage.getEmail(existing.id);
-            if (existingEmail) {
-              let accountLabel = await storage.getLabelByName(account.email);
-              if (!accountLabel) {
-                accountLabel = await storage.createLabel({ name: account.email, color: "#1a73e8" });
-              }
-              const currentLabels = [...(existingEmail.labels || [])];
-              const updates: any = {};
-              if (!currentLabels.includes(accountLabel.id)) {
-                updates.labels = [...currentLabels, accountLabel.id];
-              }
-              const isDirectRecipient = [...(existingEmail.to || []), ...(existingEmail.cc || [])].some(
-                (t: any) => t.email?.toLowerCase() === account.email.toLowerCase()
-              );
-              if (isDirectRecipient && existingEmail.accountEmail !== account.email) {
-                updates.accountEmail = account.email;
-              }
-              if (Object.keys(updates).length > 0) {
-                await storage.updateEmail(existingEmail.id, updates);
-              }
-            }
-          }
           duplicates++;
           continue;
         }
-        // Determine the true owner of this email: prefer a configured account that
-        // appears in To/Cc over the fetching account.  This handles the case where
-        // Gmail's built-in "Mail Fetcher" (Settings › Accounts) pulls messages from
-        // another mailbox into the Gmail inbox, so LocalMail would otherwise stamp
-        // every such message with the Gmail account label instead of the real one.
+        // Determine the true owner of this email: if a configured account appears in
+        // the To/Cc recipients, use that account for the label — not the fetching account.
+        // This handles Gmail's "Check mail from other accounts" feature which delivers
+        // messages addressed to another mailbox via the Gmail POP3 stream.
         const toAndCc = [...(result.email.to || []), ...(result.email.cc || [])];
         const recipientAccount = allAccounts.find(a =>
           a.email.toLowerCase() !== account.email.toLowerCase() &&
@@ -1229,38 +1201,11 @@ export async function registerRoutes(
       let duplicates = 0;
       for (const result of results) {
         if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
-          // Duplicate — but still apply this account's label and fix accountEmail if this
-          // account is the actual To/Cc recipient (handles server-side email forwarding where
-          // the same message arrives via two accounts but only one label ends up on it)
-          const existing = storage.getEmailIndexByMessageId(result.email.messageId);
-          if (existing) {
-            const existingEmail = await storage.getEmail(existing.id);
-            if (existingEmail) {
-              let accountLabel = await storage.getLabelByName(account.email);
-              if (!accountLabel) {
-                accountLabel = await storage.createLabel({ name: account.email, color: "#1a73e8" });
-              }
-              const currentLabels = [...(existingEmail.labels || [])];
-              const updates: any = {};
-              if (!currentLabels.includes(accountLabel.id)) {
-                updates.labels = [...currentLabels, accountLabel.id];
-              }
-              const isDirectRecipient = [...(existingEmail.to || []), ...(existingEmail.cc || [])].some(
-                (t: any) => t.email?.toLowerCase() === account.email.toLowerCase()
-              );
-              if (isDirectRecipient && existingEmail.accountEmail !== account.email) {
-                updates.accountEmail = account.email;
-              }
-              if (Object.keys(updates).length > 0) {
-                await storage.updateEmail(existingEmail.id, updates);
-              }
-            }
-          }
           duplicates++;
           continue;
         }
-        // Determine the true owner of this email: prefer a configured account that
-        // appears in To/Cc over the fetching account.
+        // Determine the true owner of this email: if a configured account appears in
+        // the To/Cc recipients, use that account for the label — not the fetching account.
         const toAndCcM = [...(result.email.to || []), ...(result.email.cc || [])];
         const recipientAccountM = allAccounts.find(a =>
           a.email.toLowerCase() !== account.email.toLowerCase() &&
