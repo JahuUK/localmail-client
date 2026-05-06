@@ -1404,11 +1404,11 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
               <div className="flex-1" />
               <div className="flex items-center gap-0.5 text-xs text-[#5f6368]">
                 <span data-testid="text-pagination-info">
-                  {allEmails.length === 0 ? "0" : `${(safePage - 1) * perPage + 1}–${Math.min(safePage * perPage, allEmails.length)}`} of {allEmails.length}
+                  {serverTotal === 0 ? "0" : `${(currentPage - 1) * perPage + 1}–${Math.min(currentPage * perPage, serverTotal)}`} of {serverTotal}
                 </span>
                 <button
                   onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
-                  disabled={safePage <= 1}
+                  disabled={currentPage <= 1}
                   className="p-1.5 rounded-full hover:bg-[#f1f3f4] disabled:opacity-30 disabled:cursor-default"
                   data-testid="button-page-prev"
                 >
@@ -1416,7 +1416,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
                 </button>
                 <button
                   onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
-                  disabled={safePage >= totalPages}
+                  disabled={currentPage >= totalPages}
                   className="p-1.5 rounded-full hover:bg-[#f1f3f4] disabled:opacity-30 disabled:cursor-default"
                   data-testid="button-page-next"
                 >

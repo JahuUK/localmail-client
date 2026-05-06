@@ -8,6 +8,11 @@ import { createServer } from "http";
 const app = express();
 const httpServer = createServer(app);
 
+// Trust the first reverse-proxy hop (Caddy, Nginx, etc.) so that
+// express-rate-limit can read X-Forwarded-For without throwing a fatal
+// ERR_ERL_UNEXPECTED_X_FORWARDED_FOR unhandled rejection that crashes the process.
+app.set("trust proxy", 1);
+
 declare module "http" {
   interface IncomingMessage {
     rawBody: unknown;
