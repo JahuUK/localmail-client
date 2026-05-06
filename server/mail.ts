@@ -154,7 +154,11 @@ export async function testSmtpConnection(config: {
   }
 }
 
-export async function fetchPop3Emails(account: MailAccount): Promise<ParsedEmailResult[]> {
+// In-memory cache of POP3 UIDs already downloaded per account (resets on restart;
+// the messageId dedup in the route handler catches any that slip through after restart).
+const seenPop3Uids = new Map<string, Set<string>>();
+
+export async function fetchPop3Emails(account: MailAccount, knownIds?: Set<string>): Promise<ParsedEmailResult[]> {
   const Pop3 = (await import("node-pop3")).default;
 
   const pop3 = new Pop3({
@@ -166,17 +170,33 @@ export async function fetchPop3Emails(account: MailAccount): Promise<ParsedEmail
   });
 
   const results: ParsedEmailResult[] = [];
+  const seen = seenPop3Uids.get(account.id) ?? new Set<string>();
 
   try {
-    const list = await pop3.LIST();
-    const messages = Array.isArray(list) ? list : [];
+    // Use UIDL to get server-assigned unique IDs so we only download genuinely
+    // new messages rather than re-fetching the same 20 every cycle.
+    let newMsgNums: number[] = [];
+    try {
+      const uidl = await (pop3 as any).UIDL() as [string, string][];
+      const allEntries = Array.isArray(uidl) ? uidl : [];
+      // Only process the most recent 50; ignore ancient ones beyond that window.
+      const window = allEntries.slice(-50);
+      newMsgNums = window
+        .filter(([, uid]) => !seen.has(uid))
+        .map(([num]) => Number(num));
+      // Mark all windowed UIDs as seen whether or not we download them,
+      // so re-appearing duplicates are skipped on the next cycle.
+      window.forEach(([, uid]) => seen.add(uid));
+    } catch {
+      // UIDL not supported — fall back to last 20 messages (original behaviour).
+      const list = await pop3.LIST();
+      const messages = Array.isArray(list) ? list : [];
+      newMsgNums = messages.slice(-20).map(msg => Number(Array.isArray(msg) ? msg[0] : msg));
+    }
 
-    for (const msg of messages.slice(-20)) {
+    for (const msgNum of newMsgNums) {
       try {
-        const msgNum = Number(Array.isArray(msg) ? msg[0] : msg);
         const raw: unknown = await pop3.RETR(msgNum);
-        // RFC 2822 requires CRLF line endings; join with \r\n if lines were split.
-        // Pass as Buffer so mailparser handles charset detection itself.
         const rawSource: Buffer = Buffer.isBuffer(raw)
           ? raw
           : Array.isArray(raw)
@@ -184,7 +204,10 @@ export async function fetchPop3Emails(account: MailAccount): Promise<ParsedEmail
             : Buffer.from(String(raw));
 
         const parsed = await parseRawEmail(rawSource);
-        if (parsed) results.push(parsed);
+        if (!parsed) continue;
+        // Skip if already known by RFC 2822 Message-ID (e.g. after a restart).
+        if (parsed.email.messageId && knownIds?.has(parsed.email.messageId)) continue;
+        results.push(parsed);
 
         if (account.deleteOnFetch) {
           try { await (pop3 as any).DELE(msgNum); } catch {}
@@ -194,13 +217,14 @@ export async function fetchPop3Emails(account: MailAccount): Promise<ParsedEmail
       }
     }
   } finally {
+    seenPop3Uids.set(account.id, seen);
     try { await pop3.QUIT(); } catch {}
   }
 
   return results;
 }
 
-export async function fetchImapEmails(account: MailAccount): Promise<ParsedEmailResult[]> {
+export async function fetchImapEmails(account: MailAccount, knownIds?: Set<string>): Promise<ParsedEmailResult[]> {
   const { ImapFlow } = await import("imapflow");
 
   const client = new ImapFlow({
@@ -228,20 +252,46 @@ export async function fetchImapEmails(account: MailAccount): Promise<ParsedEmail
       const startSeq = Math.max(1, totalMessages - 19);
       const range = `${startSeq}:*`;
 
-      for await (const message of client.fetch(range, {
-        envelope: true,
-        source: true,
-      })) {
-        try {
-          const source = message.source;
-          // Pass the Buffer directly — converting to a string first can corrupt
-          // bytes > 127 in headers / 8-bit body parts and break MIME parsing.
-          if (!source?.length) continue;
+      if (knownIds && knownIds.size > 0) {
+        // Two-pass: fetch envelopes first (lightweight) to find which messages
+        // are genuinely new, then download full source only for those.
+        const newSeqNos: number[] = [];
+        for await (const msg of client.fetch(range, { envelope: true })) {
+          const msgId = msg.envelope?.messageId;
+          if (msgId && knownIds.has(msgId)) continue;
+          newSeqNos.push(msg.seq);
+        }
+        if (newSeqNos.length === 0) return results;
 
-          const parsed = await parseRawEmail(source);
-          if (parsed) results.push(parsed);
-        } catch {
-          continue;
+        for await (const message of client.fetch(newSeqNos.join(","), {
+          envelope: true,
+          source: true,
+        })) {
+          try {
+            const source = message.source;
+            if (!source?.length) continue;
+            const parsed = await parseRawEmail(source);
+            if (parsed) results.push(parsed);
+          } catch {
+            continue;
+          }
+        }
+      } else {
+        // No known IDs yet (first run) — download everything in the window.
+        for await (const message of client.fetch(range, {
+          envelope: true,
+          source: true,
+        })) {
+          try {
+            const source = message.source;
+            // Pass the Buffer directly — converting to a string first can corrupt
+            // bytes > 127 in headers / 8-bit body parts and break MIME parsing.
+            if (!source?.length) continue;
+            const parsed = await parseRawEmail(source);
+            if (parsed) results.push(parsed);
+          } catch {
+            continue;
+          }
         }
       }
     } finally {
@@ -364,12 +414,12 @@ async function repairFetchPop3(
   return results;
 }
 
-export async function fetchEmails(account: MailAccount): Promise<ParsedEmailResult[]> {
+export async function fetchEmails(account: MailAccount, knownIds?: Set<string>): Promise<ParsedEmailResult[]> {
   const protocol = account.protocol || "pop3";
   if (protocol === "imap") {
-    return fetchImapEmails(account);
+    return fetchImapEmails(account, knownIds);
   }
-  return fetchPop3Emails(account);
+  return fetchPop3Emails(account, knownIds);
 }
 
 function parseListUnsubscribeHeaders(headers: any): {

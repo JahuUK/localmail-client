@@ -409,6 +409,10 @@ export class UserStorage {
     return this.messageIdMap.has(messageId);
   }
 
+  getKnownMessageIds(): Set<string> {
+    return new Set(this.messageIdMap.keys());
+  }
+
   getEmailIndexByMessageId(messageId: string): { id: string; hasAttachments: boolean } | undefined {
     if (!messageId) return undefined;
     const emailId = this.messageIdMap.get(messageId);

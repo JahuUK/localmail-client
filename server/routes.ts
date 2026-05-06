@@ -180,6 +180,8 @@ export function addLog(userId: string, level: LogEntry["level"], source: string,
 
 export { userLogs };
 
+const runningFetches = new Set<string>();
+
 function startAutoFetch(userId: string, accountId: string, intervalMinutes: number) {
   const key = `${userId}:${accountId}`;
   stopAutoFetch(userId, accountId);
@@ -187,6 +189,10 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
   const ms = intervalMinutes * 60 * 1000;
   addLog(userId, "info", "Auto-fetch", `Timer started for account ${accountId} (every ${intervalMinutes} min)`);
   const timer = setInterval(async () => {
+    // Skip this tick if the previous fetch for this account is still running
+    // (e.g. slow server, long timeout). Prevents stacking concurrent fetches.
+    if (runningFetches.has(key)) return;
+    runningFetches.add(key);
     try {
       const storage = globalStorage.getUserStorage(userId);
       const account = await storage.getAccount(accountId);
@@ -199,7 +205,8 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
       const proto = (account.protocol || "pop3").toUpperCase();
       addLog(userId, "info", "Auto-fetch", `Fetching emails for ${account.email} via ${proto}...`);
       const startTime = Date.now();
-      const results = await fetchEmails(account);
+      const knownIds = storage.getKnownMessageIds();
+      const results = await fetchEmails(account, knownIds);
       const fetchElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
       addLog(userId, "info", "Auto-fetch", `${proto} server returned ${results.length} message(s) for ${account.email} in ${fetchElapsed}s`);
       const allAccounts = await storage.getAccounts();
@@ -261,6 +268,8 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
     } catch (err: any) {
       addLog(userId, "error", "Auto-fetch", `Error fetching ${key}: ${err.message}`);
       console.error(`Auto-fetch error for ${key}: ${err.message}`);
+    } finally {
+      runningFetches.delete(key);
     }
   }, ms);
 
