@@ -15,12 +15,16 @@ function isValidId(id: string): boolean {
   return UUID_RE.test(id);
 }
 
+let _encryptionKeyCache: Buffer | null = null;
+
 function getEncryptionKey(): Buffer {
+  if (_encryptionKeyCache) return _encryptionKeyCache;
   const envKey = process.env.ENCRYPTION_KEY;
   if (envKey) {
     const isValidHex = /^[0-9a-fA-F]{64}$/.test(envKey);
     if (isValidHex) {
-      return Buffer.from(envKey, "hex");
+      _encryptionKeyCache = Buffer.from(envKey, "hex");
+      return _encryptionKeyCache;
     }
     console.warn(
       "[LocalMail] WARNING: ENCRYPTION_KEY is set but does not look like a valid 64-character hex string. " +
@@ -29,13 +33,15 @@ function getEncryptionKey(): Buffer {
     );
   }
   if (existsSync(ENCRYPTION_KEY_FILE)) {
-    return Buffer.from(readFileSync(ENCRYPTION_KEY_FILE, "utf-8").trim(), "hex");
+    _encryptionKeyCache = Buffer.from(readFileSync(ENCRYPTION_KEY_FILE, "utf-8").trim(), "hex");
+    return _encryptionKeyCache;
   }
   const key = randomBytes(32);
   if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
   writeFileSync(ENCRYPTION_KEY_FILE, key.toString("hex"), "utf-8");
   console.log("[LocalMail] Generated new encryption key. Saved to data/.encryption-key — back this file up!");
-  return key;
+  _encryptionKeyCache = key;
+  return _encryptionKeyCache;
 }
 
 function encryptString(text: string): string {

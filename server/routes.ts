@@ -246,6 +246,9 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
           maybeSendVacationReply(userId, storage, created, account).catch(() => {});
         }
         imported++;
+        // Yield to the event loop between each email so HTTP requests (e.g. reading
+        // an email) are not starved while a large batch is being processed.
+        await new Promise(resolve => setImmediate(resolve));
       }
       await storage.updateAccount(accountId, { lastFetched: new Date().toISOString() });
       const skipMsg = duplicates > 0 ? ` (${duplicates} duplicates skipped)` : "";
