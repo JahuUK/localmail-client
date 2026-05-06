@@ -1,10 +1,11 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import { globalStorage, verifyPassword, rehashIfNeeded, type UserStorage } from "./storage";
-import { insertMailAccountSchema, composeEmailSchema, insertLabelSchema, generalSettingsSchema, insertCustomFolderSchema, insertEmailRuleSchema, backupConfigSchema, type Email } from "@shared/schema";
+import { insertMailAccountSchema, composeEmailSchema, insertLabelSchema, generalSettingsSchema, insertCustomFolderSchema, insertEmailRuleSchema, backupConfigSchema, type Email, type MailAccount } from "@shared/schema";
 import { fetchEmails, fetchEmailsByMessageIds, sendSmtpEmail, testIncomingConnection, testSmtpConnection, saveAttachmentsToDisk, getAttachmentPath } from "./mail";
 import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, startScheduledBackup, stopScheduledBackup, createBackupArchive, getNextBackupTime } from "./backup";
 import { resolve } from "path";
+import { randomUUID } from "crypto";
 import multer from "multer";
 import { existsSync, mkdirSync, unlinkSync } from "fs";
 import rateLimit from "express-rate-limit";
@@ -353,6 +354,95 @@ function startTrashPurgeTimer() {
       }
     }
   }, 60 * 60 * 1000);
+}
+
+// ---------------------------------------------------------------------------
+// Async fetch job store — manual "Check mail" returns immediately with a jobId;
+// the client polls GET /api/jobs/:jobId until status is "done" or "error".
+// ---------------------------------------------------------------------------
+interface FetchJob {
+  status: "running" | "done" | "error";
+  userId: string;
+  message?: string;
+  count?: number;
+  startedAt: number;
+}
+
+const fetchJobs = new Map<string, FetchJob>();
+
+// Purge completed jobs older than 10 minutes so the Map never grows unbounded.
+setInterval(() => {
+  const cutoff = Date.now() - 10 * 60 * 1000;
+  for (const [id, job] of fetchJobs) {
+    if (job.startedAt < cutoff) fetchJobs.delete(id);
+  }
+}, 2 * 60 * 1000).unref();
+
+async function runManualFetchJob(
+  jobId: string,
+  userId: string,
+  account: MailAccount,
+  storage: UserStorage,
+): Promise<void> {
+  const job = fetchJobs.get(jobId);
+  if (!job) return;
+  const proto = (account.protocol || "pop3").toUpperCase();
+  addLog(userId, "info", "Manual fetch", `Fetching emails for ${account.email} via ${proto}...`);
+  try {
+    const startTime = Date.now();
+    const knownIds = storage.getKnownMessageIds();
+    const results = await fetchEmails(account, knownIds);
+    const fetchElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    addLog(userId, "info", "Manual fetch", `${proto} server returned ${results.length} message(s) for ${account.email} in ${fetchElapsed}s`);
+    const allAccounts = await storage.getAccounts();
+    let imported = 0;
+    let duplicates = 0;
+    for (const result of results) {
+      if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
+        duplicates++;
+        continue;
+      }
+      const toAndCcM = [...(result.email.to || []), ...(result.email.cc || [])];
+      const recipientAccountM = allAccounts.find(a =>
+        a.email.toLowerCase() !== account.email.toLowerCase() &&
+        toAndCcM.some(r => r.email?.toLowerCase() === a.email.toLowerCase())
+      );
+      const ownerEmailM = recipientAccountM ? recipientAccountM.email : account.email;
+      result.email.accountEmail = ownerEmailM;
+      if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
+        result.email.folder = "sent";
+        result.email.isUnread = false;
+      }
+      let accountLabel = await storage.getLabelByName(ownerEmailM);
+      if (!accountLabel) {
+        accountLabel = await storage.createLabel({ name: ownerEmailM, color: "#1a73e8" });
+      }
+      const labels = [...(result.email.labels || [])];
+      if (!labels.includes(accountLabel.id)) labels.push(accountLabel.id);
+      result.email.labels = labels;
+      result.email = storage.applyRulesToEmail(result.email);
+      const created = await storage.createEmail(result.email);
+      if (result.rawAttachments.length > 0) {
+        saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
+        addLog(userId, "info", "Manual fetch", `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
+      }
+      if (created.folder === "inbox") {
+        maybeSendVacationReply(userId, storage, created, account).catch(() => {});
+      }
+      imported++;
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await storage.updateAccount(account.id, { lastFetched: new Date().toISOString() });
+    const skipMsg = duplicates > 0 ? ` (${duplicates} duplicates skipped)` : "";
+    addLog(userId, "success", "Manual fetch", `${imported} new emails fetched for ${account.email} via ${proto}${skipMsg}`);
+    job.status = "done";
+    job.message = `Fetched ${imported} new emails via ${proto}${skipMsg}`;
+    job.count = imported;
+  } catch (err: any) {
+    addLog(userId, "error", "Manual fetch", `${proto} fetch failed for ${account.email}: ${err.message}`);
+    job.status = "error";
+    job.message = `${proto} fetch failed: ${err.message}`;
+  }
 }
 
 export async function registerRoutes(
@@ -1202,69 +1292,27 @@ export async function registerRoutes(
     res.json({ message: "Deleted" });
   });
 
+  // Returns immediately with a jobId; actual fetch runs on a worker thread.
+  // Client polls GET /api/jobs/:jobId for completion.
   app.post("/api/accounts/:id/fetch", requireAuth, async (req, res) => {
     const storage = getUserStorage(req);
     const userId = req.session.userId!;
     const account = await storage.getAccount(req.params.id);
     if (!account) return res.status(404).json({ message: "Account not found" });
 
-    const proto = (account.protocol || "pop3").toUpperCase();
-    addLog(userId, "info", "Manual fetch", `Fetching emails for ${account.email} via ${proto}...`);
-    try {
-      const startTime = Date.now();
-      const results = await fetchEmails(account);
-      const fetchElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      addLog(userId, "info", "Manual fetch", `${proto} server returned ${results.length} message(s) for ${account.email} in ${fetchElapsed}s`);
-      const allAccounts = await storage.getAccounts();
-      let imported = 0;
-      let duplicates = 0;
-      for (const result of results) {
-        if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
-          duplicates++;
-          continue;
-        }
-        // Determine the true owner of this email: if a configured account appears in
-        // the To/Cc recipients, use that account for the label — not the fetching account.
-        const toAndCcM = [...(result.email.to || []), ...(result.email.cc || [])];
-        const recipientAccountM = allAccounts.find(a =>
-          a.email.toLowerCase() !== account.email.toLowerCase() &&
-          toAndCcM.some(r => r.email?.toLowerCase() === a.email.toLowerCase())
-        );
-        const ownerEmailM = recipientAccountM ? recipientAccountM.email : account.email;
-        result.email.accountEmail = ownerEmailM;
-        // If the sender address matches the fetching account, treat as a sent email
-        if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
-          result.email.folder = "sent";
-          result.email.isUnread = false;
-        }
-        let accountLabel = await storage.getLabelByName(ownerEmailM);
-        if (!accountLabel) {
-          accountLabel = await storage.createLabel({ name: ownerEmailM, color: "#1a73e8" });
-        }
-        const labels = [...(result.email.labels || [])];
-        if (!labels.includes(accountLabel.id)) labels.push(accountLabel.id);
-        result.email.labels = labels;
+    const jobId = randomUUID();
+    fetchJobs.set(jobId, { status: "running", userId, startedAt: Date.now() });
+    res.json({ jobId, status: "running" });
 
-        result.email = storage.applyRulesToEmail(result.email);
+    // Fire and forget — runs fully off the HTTP request/response cycle.
+    runManualFetchJob(jobId, userId, account, storage).catch(() => {});
+  });
 
-        const created = await storage.createEmail(result.email);
-        if (result.rawAttachments.length > 0) {
-          saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
-          addLog(userId, "info", "Manual fetch", `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
-        }
-        if (created.folder === "inbox") {
-          maybeSendVacationReply(userId, storage, created, account).catch(() => {});
-        }
-        imported++;
-      }
-      await storage.updateAccount(account.id, { lastFetched: new Date().toISOString() });
-      const skipMsg = duplicates > 0 ? ` (${duplicates} duplicates skipped)` : "";
-      addLog(userId, "success", "Manual fetch", `${imported} new emails fetched for ${account.email} via ${proto}${skipMsg}`);
-      res.json({ message: `Fetched ${imported} new emails via ${proto}${skipMsg}`, count: imported });
-    } catch (err: any) {
-      addLog(userId, "error", "Manual fetch", `${proto} fetch failed for ${account.email}: ${err.message}`);
-      res.status(500).json({ message: `${proto} fetch failed: ${err.message}` });
-    }
+  app.get("/api/jobs/:jobId", requireAuth, (req, res) => {
+    const userId = req.session.userId!;
+    const job = fetchJobs.get(req.params.jobId);
+    if (!job || job.userId !== userId) return res.status(404).json({ message: "Job not found" });
+    res.json(job);
   });
 
   app.post("/api/emails/:id/redownload", requireAuth, async (req, res) => {

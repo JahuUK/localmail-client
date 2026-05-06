@@ -3,6 +3,7 @@ import nodemailer from "nodemailer";
 import { randomUUID } from "crypto";
 import { existsSync, mkdirSync, writeFileSync, readdirSync } from "fs";
 import { join } from "path";
+import { parseEmailInWorker } from "./workerPool.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -452,109 +453,24 @@ function parseListUnsubscribeHeaders(headers: any): {
 }
 
 async function parseRawEmail(rawSource: string | Buffer): Promise<ParsedEmailResult | null> {
-  const { simpleParser } = await import("mailparser") as any;
-  // Pass the raw source directly — never pre-convert to a UTF-8 string, as that
-  // corrupts bytes > 127 in headers or 8-bit body parts and breaks MIME parsing.
-  const parsed = await (simpleParser as any)(rawSource) as any;
-
-  const senderAddress = parsed.from?.value?.[0];
-  const toAddresses: any[] = parsed.to
-    ? (Array.isArray(parsed.to) ? parsed.to : [parsed.to]).flatMap((t: any) => t.value)
-    : [];
-
-  const body = parsed.text || parsed.html?.replace(/<[^>]+>/g, "") || "";
-  const bodyHtml = parsed.html || undefined;
-
-  // Used below to test whether a CID is actually referenced as an inline resource.
-  // Outlook (and some other clients) stamp CIDs on ALL MIME parts including real file
-  // attachments. A CID that does not appear in the HTML body is NOT an inline image —
-  // it is a regular attachment and must be treated as such.
-  const htmlBodyLower = (parsed.html || "").toLowerCase();
-
-  const rawAttachments: ParsedAttachment[] = [];
-  const attachmentMeta: EmailAttachment[] = [];
-
-  if (parsed.attachments && parsed.attachments.length > 0) {
-    for (const att of parsed.attachments) {
-      // Guard: skip parts with no decoded content to avoid crashes
-      if (!att.content) continue;
-
-      const contentType: string = att.contentType || "application/octet-stream";
-
-      // Recursively extract attachments from forwarded/nested emails
-      // (e.g. when Outlook uses "Forward as Attachment" → message/rfc822 MIME part)
-      if (contentType.startsWith("message/rfc822")) {
-        try {
-          const nested = await parseRawEmail(att.content as Buffer);
-          if (nested) {
-            for (const nestedAtt of nested.rawAttachments) {
-              rawAttachments.push(nestedAtt);
-              attachmentMeta.push({
-                id: nestedAtt.id,
-                filename: nestedAtt.filename,
-                contentType: nestedAtt.contentType,
-                size: nestedAtt.size,
-                ...(nestedAtt.cid ? { cid: nestedAtt.cid } : {}),
-              });
-            }
-          }
-        } catch {}
-        // Don't surface the raw .eml wrapper as a visible attachment
-        continue;
-      }
-
-      const id = randomUUID();
-      const filename = att.filename || "attachment";
-      const size = att.size || (att.content as Buffer).length;
-
-      // Only treat this attachment as inline if its CID is actually referenced in the
-      // HTML body (e.g. <img src="cid:xxxx">). Outlook stamps CIDs on every MIME part
-      // including .docx and .pdf files, which must still be shown as file attachments.
-      const rawCid: string | undefined = att.cid || undefined;
-      let cid: string | undefined;
-      if (rawCid) {
-        // Check both the full CID and the local part before the first '@'
-        const localPart = rawCid.split("@")[0].toLowerCase();
-        const isInlineRef =
-          htmlBodyLower.includes(`cid:${rawCid.toLowerCase()}`) ||
-          htmlBodyLower.includes(`cid:${localPart}`);
-        cid = isInlineRef ? rawCid : undefined;
-      }
-
-      rawAttachments.push({ id, filename, contentType, size, cid, content: att.content as Buffer });
-      attachmentMeta.push({ id, filename, contentType, size, ...(cid ? { cid } : {}) });
-    }
-  }
-
-  const msgId = parsed.messageId || undefined;
-  const unsub = parseListUnsubscribeHeaders(parsed.headers);
-
-  return {
-    email: {
-      sender: {
-        name: senderAddress?.name || senderAddress?.address || "Unknown",
-        email: senderAddress?.address || "",
-      },
-      to: toAddresses.map((a: any) => ({
-        name: a.name || a.address || "",
-        email: a.address || "",
+  try {
+    const buffer = Buffer.isBuffer(rawSource) ? rawSource : Buffer.from(rawSource as string);
+    const result = await parseEmailInWorker(buffer);
+    return {
+      email: result.email as unknown as InsertEmail,
+      rawAttachments: result.rawAttachments.map(att => ({
+        id: att.id,
+        filename: att.filename,
+        contentType: att.contentType,
+        size: att.size,
+        ...(att.cid ? { cid: att.cid } : {}),
+        content: Buffer.from(att.content),
       })),
-      subject: parsed.subject || "(no subject)",
-      snippet: body.substring(0, 150).replace(/\n/g, " "),
-      body,
-      bodyHtml,
-      date: (parsed.date || new Date()).toISOString(),
-      isUnread: true,
-      isStarred: false,
-      folder: "inbox",
-      attachments: attachmentMeta.length > 0 ? attachmentMeta : undefined,
-      messageId: msgId,
-      ...(unsub.url ? { listUnsubscribeUrl: unsub.url } : {}),
-      ...(unsub.mail ? { listUnsubscribeMail: unsub.mail } : {}),
-      ...(unsub.oneClick ? { listUnsubscribeOneClick: true } : {}),
-    },
-    rawAttachments,
-  };
+    };
+  } catch (err: any) {
+    console.error("[parseRawEmail] worker failed:", err.message);
+    return null;
+  }
 }
 
 export async function sendSmtpEmail(

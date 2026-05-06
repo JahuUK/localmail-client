@@ -5291,9 +5291,28 @@ function MyAccountsPanel() {
     setFetchingAccounts(prev => new Set(prev).add(id));
     try {
       const res = await apiRequest("POST", `/api/accounts/${id}/fetch`);
-      const data = await res.json();
-      queryClient.invalidateQueries();
-      toast({ title: data.message || "Emails fetched" });
+      const { jobId } = await res.json();
+      await new Promise<void>((resolve) => {
+        const poll = setInterval(async () => {
+          try {
+            const statusRes = await apiRequest("GET", `/api/jobs/${jobId}`);
+            const job = await statusRes.json();
+            if (job.status === "done") {
+              clearInterval(poll);
+              queryClient.invalidateQueries();
+              toast({ title: job.message || "Emails fetched" });
+              resolve();
+            } else if (job.status === "error") {
+              clearInterval(poll);
+              toast({ title: "Fetch failed", description: job.message, variant: "destructive" });
+              resolve();
+            }
+          } catch {
+            clearInterval(poll);
+            resolve();
+          }
+        }, 750);
+      });
     } catch (err: any) {
       toast({ title: "Fetch failed", description: err.message, variant: "destructive" });
     } finally {
