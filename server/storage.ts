@@ -73,7 +73,13 @@ function isEncrypted(value: string): boolean {
   return /^[0-9a-f]{32}:[0-9a-f]+$/.test(value);
 }
 
-function hashPassword(password: string): string {
+async function hashPassword(password: string): Promise<string> {
+  return bcrypt.hash(password, 10);
+}
+
+// Sync-only variant used in constructor-time migrations (one-time startup path,
+// no HTTP request is waiting so blocking is acceptable).
+function hashPasswordSync(password: string): string {
   return bcrypt.hashSync(password, 10);
 }
 
@@ -85,14 +91,14 @@ function verifyLegacySha256(password: string, hash: string): boolean {
   return createHash("sha256").update(password).digest("hex") === hash;
 }
 
-export function verifyPassword(password: string, hash: string): boolean {
+export async function verifyPassword(password: string, hash: string): Promise<boolean> {
   if (isLegacySha256(hash)) {
     return verifyLegacySha256(password, hash);
   }
-  return bcrypt.compareSync(password, hash);
+  return bcrypt.compare(password, hash);
 }
 
-export function rehashIfNeeded(password: string, currentHash: string): string | null {
+export async function rehashIfNeeded(password: string, currentHash: string): Promise<string | null> {
   if (isLegacySha256(currentHash)) {
     return hashPassword(password);
   }
@@ -1142,7 +1148,7 @@ export class GlobalStorage {
     const user: User = {
       id: userId,
       username: "admin",
-      password: hashPassword("admin"),
+      password: hashPasswordSync("admin"),
       displayName: "Admin",
       isAdmin: true,
     };
@@ -1214,7 +1220,7 @@ export class GlobalStorage {
     const user: User = {
       id: userId,
       username: envUser,
-      password: hashPassword(envPass),
+      password: hashPasswordSync(envPass),
       displayName: envUser,
       isAdmin: true,
     };
@@ -1252,7 +1258,7 @@ export class GlobalStorage {
     const user: User = {
       ...insertUser,
       id,
-      password: hashPassword(insertUser.password),
+      password: await hashPassword(insertUser.password),
       isAdmin: insertUser.isAdmin ?? isFirstUser,
     };
     this.users.set(id, user);
@@ -1276,7 +1282,7 @@ export class GlobalStorage {
   async resetUserPassword(userId: string, newPassword: string): Promise<boolean> {
     const user = this.users.get(userId);
     if (!user) return false;
-    user.password = hashPassword(newPassword);
+    user.password = await hashPassword(newPassword);
     this.users.set(userId, user);
     this.persistUsers();
     return true;

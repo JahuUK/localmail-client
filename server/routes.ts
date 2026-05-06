@@ -306,6 +306,7 @@ async function initScheduledBackups() {
 
 async function initAutoFetchForAllUsers() {
   const users = await globalStorage.getAllUsers();
+  let staggerMs = 0;
   for (const user of users) {
     try {
       const storage = globalStorage.getUserStorage(user.id);
@@ -313,7 +314,10 @@ async function initAutoFetchForAllUsers() {
       for (const account of accounts) {
         if (account.autoFetchEnabled !== false) {
           const interval = account.autoFetchInterval || 30;
-          startAutoFetch(user.id, account.id, interval);
+          // Stagger each account's first fetch by 10 s so all timers don't
+          // fire simultaneously and pile CPU work into a single spike.
+          setTimeout(() => startAutoFetch(user.id, account.id, interval), staggerMs);
+          staggerMs += 10_000;
         }
       }
     } catch {}
@@ -427,12 +431,12 @@ export async function registerRoutes(
     }
     const user = await globalStorage.getUserByUsername(username);
     const ip = getClientIp(req);
-    if (!user || !verifyPassword(password, user.password)) {
+    if (!user || !(await verifyPassword(password, user.password))) {
       if (user) addLog(user.id, "warn", "Auth", `Failed login attempt for "${username}" from ${ip} (wrong password)`);
       else console.warn(`[Auth] Failed login attempt for unknown username "${username}" from ${ip}`);
       return res.status(401).json({ message: "Invalid username or password" });
     }
-    const newHash = rehashIfNeeded(password, user.password);
+    const newHash = await rehashIfNeeded(password, user.password);
     if (newHash) {
       await globalStorage.updateUserPassword(user.id, newHash);
     }
@@ -457,7 +461,7 @@ export async function registerRoutes(
     }
     const user = await globalStorage.getUserByUsername(username);
     const ip = getClientIp(req);
-    if (!user || !verifyPassword(password, user.password)) {
+    if (!user || !(await verifyPassword(password, user.password))) {
       if (user) addLog(user.id, "warn", "Auth", `Failed admin login attempt for "${username}" from ${ip} (wrong password)`);
       return res.status(401).json({ message: "Invalid username or password" });
     }
@@ -465,7 +469,7 @@ export async function registerRoutes(
       addLog(user.id, "warn", "Auth", `Non-admin user "${username}" attempted admin login from ${ip}`);
       return res.status(403).json({ message: "This account does not have admin privileges" });
     }
-    const newHash = rehashIfNeeded(password, user.password);
+    const newHash = await rehashIfNeeded(password, user.password);
     if (newHash) {
       await globalStorage.updateUserPassword(user.id, newHash);
     }
