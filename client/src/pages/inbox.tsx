@@ -208,13 +208,6 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
 
   const emailsQuery = useQuery<{ emails: Email[]; total: number }>({
     queryKey: [queryKey],
-    queryFn: async () => {
-      const res = await fetch(queryKey, { credentials: "include" });
-      if (!res.ok) throw new Error("Failed to fetch emails");
-      const emails: Email[] = await res.json();
-      const total = parseInt(res.headers.get("X-Total-Count") || String(emails.length), 10);
-      return { emails, total };
-    },
     refetchInterval: 30_000,
   });
 

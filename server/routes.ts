@@ -557,25 +557,21 @@ export async function registerRoutes(
         dateRange,
         searchBody,
       });
-      res.set("X-Total-Count", String(emails.length));
-      return res.json(emails);
+      return res.json({ emails, total: emails.length });
     }
 
     if (label) {
-      const { emails, total } = await storage.getEmailsByLabel(label, pageOpts);
-      res.set("X-Total-Count", String(total));
-      return res.json(emails);
+      const result = await storage.getEmailsByLabel(label, pageOpts);
+      return res.json(result);
     }
 
     if (account) {
-      const { emails, total } = await storage.getEmailsByAccount(account, pageOpts);
-      res.set("X-Total-Count", String(total));
-      return res.json(emails);
+      const result = await storage.getEmailsByAccount(account, pageOpts);
+      return res.json(result);
     }
 
-    const { emails, total } = await storage.getEmails(folder, pageOpts);
-    res.set("X-Total-Count", String(total));
-    res.json(emails);
+    const result = await storage.getEmails(folder, pageOpts);
+    res.json(result);
   });
 
   app.get("/api/emails/:id", requireAuth, async (req, res) => {
