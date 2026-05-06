@@ -536,6 +536,9 @@ export async function registerRoutes(
     const dateRange = req.query.dateRange as string | undefined;
     const searchBody = req.query.searchBody === "1";
     const scopeAll = req.query.scope === "all";
+    const page = parseInt(req.query.page as string) || 1;
+    const limit = parseInt(req.query.limit as string) || 0;
+    const pageOpts = limit > 0 ? { page, limit } : undefined;
 
     const hasFilters = search || hasAttachment || unreadOnly || starredOnly || dateRange || searchBody;
 
@@ -554,20 +557,24 @@ export async function registerRoutes(
         dateRange,
         searchBody,
       });
+      res.set("X-Total-Count", String(emails.length));
       return res.json(emails);
     }
 
     if (label) {
-      const emails = await storage.getEmailsByLabel(label);
+      const { emails, total } = await storage.getEmailsByLabel(label, pageOpts);
+      res.set("X-Total-Count", String(total));
       return res.json(emails);
     }
 
     if (account) {
-      const emails = await storage.getEmailsByAccount(account);
+      const { emails, total } = await storage.getEmailsByAccount(account, pageOpts);
+      res.set("X-Total-Count", String(total));
       return res.json(emails);
     }
 
-    const emails = await storage.getEmails(folder);
+    const { emails, total } = await storage.getEmails(folder, pageOpts);
+    res.set("X-Total-Count", String(total));
     res.json(emails);
   });
 
@@ -1597,7 +1604,7 @@ export async function registerRoutes(
       const allStorages = globalStorage.getAllActiveStorages();
       for (const storage of allStorages) {
         try {
-          const scheduled = await storage.getEmails("scheduled");
+          const { emails: scheduled } = await storage.getEmails("scheduled");
           const due = scheduled.filter(e => e.scheduledFor && e.scheduledFor <= now);
           for (const email of due) {
             if (!email.accountEmail) {

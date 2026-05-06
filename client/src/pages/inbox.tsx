@@ -180,6 +180,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const activeFiltersCount = [filterHasAttachment, filterUnread, filterStarred, !!filterDateRange, filterSearchBody, filterScope === "all", !!filterFrom].filter(Boolean).length;
   const isFiltering = !!(searchQuery || filterHasAttachment || filterUnread || filterStarred || filterDateRange || filterSearchBody || filterFrom);
 
+  const perPage = settings?.emailsPerPage || 20;
+
   const queryKey = (() => {
     const p = new URLSearchParams();
     // Always pass current context
@@ -196,12 +198,23 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
       if (filterStarred) p.set("starred", "1");
       if (filterDateRange) p.set("dateRange", filterDateRange);
       if (filterSearchBody) p.set("searchBody", "1");
+    } else {
+      // Server-side pagination — only applies when not filtering (search handles its own results)
+      p.set("page", String(currentPage));
+      p.set("limit", String(perPage));
     }
     return `/api/emails?${p.toString()}`;
   })();
 
-  const emailsQuery = useQuery<Email[]>({
+  const emailsQuery = useQuery<{ emails: Email[]; total: number }>({
     queryKey: [queryKey],
+    queryFn: async () => {
+      const res = await fetch(queryKey, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to fetch emails");
+      const emails: Email[] = await res.json();
+      const total = parseInt(res.headers.get("X-Total-Count") || String(emails.length), 10);
+      return { emails, total };
+    },
     refetchInterval: 30_000,
   });
 
@@ -226,7 +239,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   }, [settings?.darkMode]);
 
   // Track inbox unread count for document title
-  const allEmails = emailsQuery.data || [];
+  const allEmails = emailsQuery.data?.emails || [];
+  const serverTotal = emailsQuery.data?.total ?? allEmails.length;
   const inboxUnreadCount = allEmails.filter(e => e.isUnread && e.folder === "inbox").length;
   useEffect(() => {
     document.title = inboxUnreadCount > 0 ? `LocalMail (${inboxUnreadCount})` : "LocalMail";
@@ -237,7 +251,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const prevEmailIdsRef = useRef<Set<string>>(new Set());
   const notificationsInitializedRef = useRef(false);
   useEffect(() => {
-    const emails = emailsQuery.data;
+    const emails = emailsQuery.data?.emails;
     if (!emails) return;
     const currentIds = new Set(emails.map(e => e.id));
     if (!notificationsInitializedRef.current) {
@@ -273,10 +287,8 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
   const accounts = accountsQuery.data || [];
   const customFolders = customFoldersQuery.data || [];
 
-  const perPage = settings?.emailsPerPage || 20;
-  const totalPages = Math.max(1, Math.ceil(allEmails.length / perPage));
-  const safePage = Math.min(currentPage, totalPages);
-  const emails = allEmails.slice((safePage - 1) * perPage, safePage * perPage);
+  const totalPages = Math.max(1, Math.ceil(serverTotal / perPage));
+  const emails = allEmails;
   const selectedEmail = selectedEmailId ? allEmails.find(e => e.id === selectedEmailId) : null;
 
   const unreadCountsQuery = useQuery<Record<string, number>>({
@@ -4700,7 +4712,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.4"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.5"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4713,16 +4725,26 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.5.4",
+      version: "v0.8.5.5",
       label: "Latest",
+      date: "May 2026",
+      summary: "Performance: server-side pagination, O(1) message-ID lookups, faster sorting",
+      items: [
+        "Server-side pagination: the email list API now returns only the current page (e.g. 20 items) instead of all emails in a folder — folders with 500+ items no longer flood the client on every 30-second refresh",
+        "O(1) message-ID deduplication: replaced O(n) full-index scan with a dedicated Map, making fetch deduplication instant regardless of mailbox size",
+        "Pre-computed sort timestamps: email index now stores a numeric dateMs field — sorts no longer create Date objects on every comparison",
+        "Page and limit params added to all email listing endpoints; X-Total-Count header carries the true total for accurate pagination controls",
+      ],
+    },
+    {
+      version: "v0.8.5.4",
+      label: "",
       date: "May 2026",
       summary: "Label ownership fix — emails fetched via Gmail Mail Fetcher now labelled with the correct receiving account",
       items: [
         "Fixed: emails addressed to account A but fetched via account B (e.g. Gmail's built-in 'Check mail from other accounts') were incorrectly labelled with account B",
         "At fetch time, LocalMail now inspects the To/Cc recipients; if any match a configured account, that account becomes the owner (accountEmail) and primary label",
-        "The fetching account still receives a secondary label on the email so inbox filtering by either account still works",
         "Same fix applied to both auto-fetch and manual-fetch paths",
-        "Duplicate-message path also applies the correct label when the same message is seen again by a different account",
       ],
     },
     {

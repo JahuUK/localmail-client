@@ -100,6 +100,7 @@ interface EmailIndex {
   subject: string;
   snippet: string;
   date: string;
+  dateMs: number;
   isUnread: boolean;
   isStarred: boolean;
   folder: string;
@@ -146,6 +147,7 @@ function userAttachmentsDir(userId: string): string {
 
 export class UserStorage {
   private emailIndex: Map<string, EmailIndex>;
+  private messageIdMap: Map<string, string>;
   private accounts: Map<string, MailAccount>;
   private labels: Map<string, EmailLabel>;
   private contacts: Map<string, { name: string; email: string }>;
@@ -161,6 +163,7 @@ export class UserStorage {
     if (!isValidId(userId)) throw new Error("Invalid user ID");
     this.userId = userId;
     this.emailIndex = new Map();
+    this.messageIdMap = new Map();
     this.accounts = new Map();
     this.labels = new Map();
     this.contacts = new Map();
@@ -292,6 +295,7 @@ export class UserStorage {
           subject: email.subject,
           snippet: email.snippet,
           date: email.date,
+          dateMs: email.date ? new Date(email.date).getTime() : 0,
           isUnread: email.isUnread,
           isStarred: email.isStarred,
           folder: email.folder,
@@ -304,6 +308,7 @@ export class UserStorage {
           sendStatus: email.sendStatus,
           sendError: email.sendError,
         });
+        if (email.messageId) this.messageIdMap.set(email.messageId, email.id);
       } catch {}
     }
     if (migrated > 0) {
@@ -389,18 +394,16 @@ export class UserStorage {
   hasMessageId(messageId: string): boolean {
     if (!messageId) return false;
     if (this.deletedMessageIds.has(messageId)) return true;
-    for (const idx of this.emailIndex.values()) {
-      if (idx.messageId === messageId) return true;
-    }
-    return false;
+    return this.messageIdMap.has(messageId);
   }
 
   getEmailIndexByMessageId(messageId: string): { id: string; hasAttachments: boolean } | undefined {
     if (!messageId) return undefined;
-    for (const idx of this.emailIndex.values()) {
-      if (idx.messageId === messageId) return { id: idx.id, hasAttachments: idx.hasAttachments || false };
-    }
-    return undefined;
+    const emailId = this.messageIdMap.get(messageId);
+    if (!emailId) return undefined;
+    const idx = this.emailIndex.get(emailId);
+    if (!idx) return undefined;
+    return { id: idx.id, hasAttachments: idx.hasAttachments || false };
   }
 
   /** Returns every email for the given account that is missing attachments and has a known Message-ID. */
@@ -418,7 +421,7 @@ export class UserStorage {
     return results;
   }
 
-  async getEmails(folder?: string): Promise<Email[]> {
+  async getEmails(folder?: string, opts?: { page?: number; limit?: number }): Promise<{ emails: Email[]; total: number }> {
     let entries = Array.from(this.emailIndex.values());
     if (folder === "starred") {
       entries = entries.filter(e => e.isStarred && e.folder !== "trash" && e.folder !== "spam");
@@ -427,23 +430,31 @@ export class UserStorage {
     } else if (folder) {
       entries = entries.filter(e => e.folder === folder);
     }
-    entries.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return entries.map(idx => ({
-      ...idx,
-      body: "",
-      labels: idx.labels || [],
-    }));
+    entries.sort((a, b) => b.dateMs - a.dateMs);
+    const total = entries.length;
+    if (opts?.limit && opts.limit > 0) {
+      const page = Math.max(1, opts.page || 1);
+      entries = entries.slice((page - 1) * opts.limit, page * opts.limit);
+    }
+    return {
+      emails: entries.map(idx => ({ ...idx, body: "", labels: idx.labels || [] })),
+      total,
+    };
   }
 
-  async getEmailsByLabel(labelId: string): Promise<Email[]> {
-    const entries = Array.from(this.emailIndex.values())
-      .filter(e => e.labels?.includes(labelId) && e.folder !== "trash" && e.folder !== "spam")
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return entries.map(idx => ({
-      ...idx,
-      body: "",
-      labels: idx.labels || [],
-    }));
+  async getEmailsByLabel(labelId: string, opts?: { page?: number; limit?: number }): Promise<{ emails: Email[]; total: number }> {
+    let entries = Array.from(this.emailIndex.values())
+      .filter(e => e.labels?.includes(labelId) && e.folder !== "trash" && e.folder !== "spam");
+    entries.sort((a, b) => b.dateMs - a.dateMs);
+    const total = entries.length;
+    if (opts?.limit && opts.limit > 0) {
+      const page = Math.max(1, opts.page || 1);
+      entries = entries.slice((page - 1) * opts.limit, page * opts.limit);
+    }
+    return {
+      emails: entries.map(idx => ({ ...idx, body: "", labels: idx.labels || [] })),
+      total,
+    };
   }
 
   async getEmail(id: string): Promise<Email | undefined> {
@@ -466,6 +477,7 @@ export class UserStorage {
       subject: email.subject,
       snippet: email.snippet,
       date: email.date,
+      dateMs: email.date ? new Date(email.date).getTime() : 0,
       isUnread: email.isUnread,
       isStarred: email.isStarred,
       folder: email.folder,
@@ -478,6 +490,7 @@ export class UserStorage {
       sendStatus: email.sendStatus,
       sendError: email.sendError,
     });
+    if (email.messageId) this.messageIdMap.set(email.messageId, id);
     return newEmail;
   }
 
@@ -513,6 +526,7 @@ export class UserStorage {
     if (!idx) return false;
     if (idx.messageId) {
       this.deletedMessageIds.add(idx.messageId);
+      this.messageIdMap.delete(idx.messageId);
       this.scheduleMetaSave();
     }
     this.emailIndex.delete(id);
@@ -725,19 +739,23 @@ export class UserStorage {
 
       matching.push({ ...idx, body: "", labels: idx.labels || [] });
     }
-    matching.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    matching.sort((a, b) => (b as any).dateMs - (a as any).dateMs);
     return matching;
   }
 
-  async getEmailsByAccount(accountEmail: string): Promise<Email[]> {
-    const entries = Array.from(this.emailIndex.values())
-      .filter(e => e.accountEmail === accountEmail && e.folder !== "trash" && e.folder !== "spam")
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    return entries.map(idx => ({
-      ...idx,
-      body: "",
-      labels: idx.labels || [],
-    }));
+  async getEmailsByAccount(accountEmail: string, opts?: { page?: number; limit?: number }): Promise<{ emails: Email[]; total: number }> {
+    let entries = Array.from(this.emailIndex.values())
+      .filter(e => e.accountEmail === accountEmail && e.folder !== "trash" && e.folder !== "spam");
+    entries.sort((a, b) => b.dateMs - a.dateMs);
+    const total = entries.length;
+    if (opts?.limit && opts.limit > 0) {
+      const page = Math.max(1, opts.page || 1);
+      entries = entries.slice((page - 1) * opts.limit, page * opts.limit);
+    }
+    return {
+      emails: entries.map(idx => ({ ...idx, body: "", labels: idx.labels || [] })),
+      total,
+    };
   }
 
   async getLabels(): Promise<EmailLabel[]> {
