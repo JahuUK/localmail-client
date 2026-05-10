@@ -3428,7 +3428,11 @@ function InlineReplyComposer({
   };
 
   const execCommand = (command: string, value?: string) => {
+    // Save the current selection before focus() resets it (critical for list commands)
+    const sel = window.getSelection();
+    const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
     editorRef.current?.focus();
+    if (savedRange && sel) { sel.removeAllRanges(); sel.addRange(savedRange); }
     document.execCommand(command, false, value);
     syncBody();
   };
@@ -4183,7 +4187,11 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   };
 
   const execCommand = (command: string, value?: string) => {
+    // Save the current selection before focus() resets it (critical for list commands)
+    const sel = window.getSelection();
+    const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
     editorRef.current?.focus();
+    if (savedRange && sel) { sel.removeAllRanges(); sel.addRange(savedRange); }
     document.execCommand(command, false, value);
     syncBody();
   };
@@ -6531,7 +6539,11 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
   }, [value]);
 
   const exec = (cmd: string, val?: string) => {
+    // Save the current selection before focus() resets it (critical for list commands)
+    const sel = window.getSelection();
+    const savedRange = sel && sel.rangeCount > 0 ? sel.getRangeAt(0).cloneRange() : null;
     editorRef.current?.focus();
+    if (savedRange && sel) { sel.removeAllRanges(); sel.addRange(savedRange); }
     document.execCommand(cmd, false, val);
   };
 
