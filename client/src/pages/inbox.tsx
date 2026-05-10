@@ -3437,6 +3437,53 @@ function InlineReplyComposer({
     syncBody();
   };
 
+  const toggleList = (tag: "ul" | "ol") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (sel.rangeCount === 0) {
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    }
+    const range = sel.getRangeAt(0);
+    let node: Node | null = range.commonAncestorContainer;
+    let existingList: HTMLElement | null = null;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
+      node = node.parentNode;
+    }
+    if (existingList) {
+      const parent = existingList.parentNode!;
+      const items = Array.from(existingList.querySelectorAll("li"));
+      const frag = document.createDocumentFragment();
+      (items.length ? items : [existingList]).forEach(item => {
+        const div = document.createElement("div");
+        div.innerHTML = (item as HTMLElement).innerHTML || "<br>";
+        frag.appendChild(div);
+      });
+      parent.replaceChild(frag, existingList);
+    } else {
+      let blockNode: Node | null = range.commonAncestorContainer;
+      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
+      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      const list = document.createElement(tag);
+      const li = document.createElement("li");
+      if (blockNode && blockNode !== editor) {
+        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+        list.appendChild(li);
+        editor.insertBefore(list, blockNode);
+        editor.removeChild(blockNode);
+      } else {
+        li.innerHTML = "<br>"; list.appendChild(li);
+        try { range.insertNode(list); } catch { editor.appendChild(list); }
+      }
+      const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
+      sel.removeAllRanges(); sel.addRange(nr);
+    }
+    syncBody();
+  };
+
   const handlePaste = (e: React.ClipboardEvent) => {
     const items = e.clipboardData?.items;
     if (!items) return;
@@ -3767,8 +3814,8 @@ function InlineReplyComposer({
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list"><List className="h-4 w-4" /></button>
-          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertOrderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); toggleList("ul"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list"><List className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); toggleList("ol"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
@@ -4193,6 +4240,53 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     editorRef.current?.focus();
     if (savedRange && sel) { sel.removeAllRanges(); sel.addRange(savedRange); }
     document.execCommand(command, false, value);
+    syncBody();
+  };
+
+  const toggleList = (tag: "ul" | "ol") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (sel.rangeCount === 0) {
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    }
+    const range = sel.getRangeAt(0);
+    let node: Node | null = range.commonAncestorContainer;
+    let existingList: HTMLElement | null = null;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
+      node = node.parentNode;
+    }
+    if (existingList) {
+      const parent = existingList.parentNode!;
+      const items = Array.from(existingList.querySelectorAll("li"));
+      const frag = document.createDocumentFragment();
+      (items.length ? items : [existingList]).forEach(item => {
+        const div = document.createElement("div");
+        div.innerHTML = (item as HTMLElement).innerHTML || "<br>";
+        frag.appendChild(div);
+      });
+      parent.replaceChild(frag, existingList);
+    } else {
+      let blockNode: Node | null = range.commonAncestorContainer;
+      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
+      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      const list = document.createElement(tag);
+      const li = document.createElement("li");
+      if (blockNode && blockNode !== editor) {
+        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+        list.appendChild(li);
+        editor.insertBefore(list, blockNode);
+        editor.removeChild(blockNode);
+      } else {
+        li.innerHTML = "<br>"; list.appendChild(li);
+        try { range.insertNode(list); } catch { editor.appendChild(list); }
+      }
+      const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
+      sel.removeAllRanges(); sel.addRange(nr);
+    }
     syncBody();
   };
 
@@ -4648,10 +4742,10 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list" data-testid="button-bullet-list">
+          <button onMouseDown={(e) => { e.preventDefault(); toggleList("ul"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list" data-testid="button-bullet-list">
             <List className="h-4 w-4" />
           </button>
-          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertOrderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list" data-testid="button-numbered-list">
+          <button onMouseDown={(e) => { e.preventDefault(); toggleList("ol"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list" data-testid="button-numbered-list">
             <ListOrdered className="h-4 w-4" />
           </button>
 
@@ -6547,6 +6641,53 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
     document.execCommand(cmd, false, val);
   };
 
+  const toggleList = (tag: "ul" | "ol") => {
+    const editor = editorRef.current;
+    if (!editor) return;
+    editor.focus();
+    const sel = window.getSelection();
+    if (!sel) return;
+    if (sel.rangeCount === 0) {
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    }
+    const range = sel.getRangeAt(0);
+    let node: Node | null = range.commonAncestorContainer;
+    let existingList: HTMLElement | null = null;
+    while (node && node !== editor) {
+      if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
+      node = node.parentNode;
+    }
+    if (existingList) {
+      const parent = existingList.parentNode!;
+      const items = Array.from(existingList.querySelectorAll("li"));
+      const frag = document.createDocumentFragment();
+      (items.length ? items : [existingList]).forEach(item => {
+        const div = document.createElement("div");
+        div.innerHTML = (item as HTMLElement).innerHTML || "<br>";
+        frag.appendChild(div);
+      });
+      parent.replaceChild(frag, existingList);
+    } else {
+      let blockNode: Node | null = range.commonAncestorContainer;
+      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
+      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      const list = document.createElement(tag);
+      const li = document.createElement("li");
+      if (blockNode && blockNode !== editor) {
+        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+        list.appendChild(li);
+        editor.insertBefore(list, blockNode);
+        editor.removeChild(blockNode);
+      } else {
+        li.innerHTML = "<br>"; list.appendChild(li);
+        try { range.insertNode(list); } catch { editor.appendChild(list); }
+      }
+      const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
+      sel.removeAllRanges(); sel.addRange(nr);
+    }
+    if (editorRef.current) onChange(editorRef.current.innerHTML);
+  };
+
   const handleLink = () => {
     const url = prompt("Enter URL:");
     if (url) exec("createLink", url.startsWith("http") ? url : `https://${url}`);
@@ -6570,7 +6711,7 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
           <Underline className="w-3.5 h-3.5" />
         </button>
         <div className="w-px h-4 bg-[#dadce0] mx-1" />
-        <button onMouseDown={e => { e.preventDefault(); exec("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Bullet list">
+        <button onMouseDown={e => { e.preventDefault(); toggleList("ul"); }} className="p-1.5 rounded hover:bg-[#e8eaed] text-[#5f6368]" title="Bullet list">
           <List className="w-3.5 h-3.5" />
         </button>
         <div className="w-px h-4 bg-[#dadce0] mx-1" />
