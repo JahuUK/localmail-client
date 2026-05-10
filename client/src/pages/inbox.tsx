@@ -55,6 +55,8 @@ import {
   List,
   ListOrdered,
   Link as LinkIcon,
+  Undo2,
+  Redo2,
   SquareCheck,
   Minus,
   FolderInput,
@@ -1120,7 +1122,7 @@ export default function InboxPage({ user, onLogout }: InboxProps) {
               </Button>
             )}
             {!selectedEmail && (
-              <div className="w-[40%] relative">
+              <div className="w-full sm:w-[40%] relative">
                 <Search className="w-4 h-4 absolute left-4 top-1/2 -translate-y-1/2 text-[#5f6368]" />
                 <input
                   placeholder="Search mail"
@@ -3178,6 +3180,145 @@ function EmailView({
   );
 }
 
+function ChipInput({
+  value,
+  onChange,
+  onSearch,
+  onBlurClear,
+  placeholder,
+  testId,
+  autoFocus,
+  suggestions,
+}: {
+  value: string;
+  onChange: (val: string) => void;
+  onSearch?: (q: string) => void;
+  onBlurClear?: () => void;
+  placeholder?: string;
+  testId?: string;
+  autoFocus?: boolean;
+  suggestions?: { name: string; email: string }[];
+}) {
+  const [inputVal, setInputVal] = useState("");
+  const inputRef = useRef<HTMLInputElement>(null);
+  const chips = useMemo(() => value.split(",").map(s => s.trim()).filter(Boolean), [value]);
+  const [dragIdx, setDragIdx] = useState<number | null>(null);
+
+  useEffect(() => { if (!value) setInputVal(""); }, [value]);
+
+  const commit = (text: string = inputVal) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
+    onChange([...chips, trimmed].join(", "));
+    setInputVal("");
+    onSearch?.("");
+  };
+
+  const removeChip = (idx: number) => {
+    onChange(chips.filter((_, i) => i !== idx).join(", "));
+    inputRef.current?.focus();
+  };
+
+  const handleSelectSuggestion = (contact: { name: string; email: string }) => {
+    onChange([...chips, contact.email].join(", "));
+    setInputVal("");
+    onSearch?.("");
+    inputRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if ((e.key === "," || e.key === "Enter" || e.key === "Tab") && inputVal.trim()) {
+      e.preventDefault();
+      commit();
+    } else if (e.key === "Backspace" && !inputVal && chips.length > 0) {
+      removeChip(chips.length - 1);
+    }
+  };
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const val = e.target.value;
+    if (val.endsWith(",")) {
+      const trimmed = val.slice(0, -1).trim();
+      if (trimmed) { commit(trimmed); return; }
+    }
+    setInputVal(val);
+    onSearch?.(val);
+  };
+
+  const handleDrop = (toIdx: number) => {
+    if (dragIdx === null || dragIdx === toIdx) { setDragIdx(null); return; }
+    const next = [...chips];
+    const [moved] = next.splice(dragIdx, 1);
+    next.splice(toIdx, 0, moved);
+    onChange(next.join(", "));
+    setDragIdx(null);
+  };
+
+  return (
+    <div
+      className="flex flex-wrap items-center gap-1 flex-1 cursor-text min-h-[28px]"
+      onClick={() => inputRef.current?.focus()}
+    >
+      {chips.map((chip, i) => (
+        <span
+          key={i}
+          draggable
+          onDragStart={() => setDragIdx(i)}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={() => handleDrop(i)}
+          className="flex items-center gap-1 bg-[#e8eaed] rounded-full px-2.5 py-0.5 text-xs text-[#202124] cursor-grab select-none"
+          data-testid={`chip-recipient-${i}`}
+        >
+          {chip}
+          <button
+            onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); removeChip(i); }}
+            className="text-[#5f6368] hover:text-[#d93025] ml-0.5"
+            data-testid={`button-remove-chip-${i}`}
+          >
+            <X className="h-2.5 w-2.5" />
+          </button>
+        </span>
+      ))}
+      <div className="relative flex-1 min-w-[80px]">
+        <input
+          ref={inputRef}
+          value={inputVal}
+          onChange={handleChange}
+          onKeyDown={handleKeyDown}
+          onBlur={() => {
+            if (inputVal.trim()) commit();
+            setTimeout(() => onBlurClear?.(), 200);
+          }}
+          placeholder={chips.length === 0 ? placeholder : ""}
+          autoFocus={autoFocus}
+          autoComplete="off"
+          className="w-full text-sm outline-none bg-transparent"
+          data-testid={testId}
+        />
+        {suggestions && suggestions.length > 0 && (
+          <div className="absolute left-0 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
+            {suggestions.map((c, i) => (
+              <button
+                key={i}
+                onMouseDown={(e) => { e.preventDefault(); handleSelectSuggestion(c); }}
+                className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors"
+              >
+                <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{ backgroundColor: ["#1a73e8", "#e8710a", "#137333", "#a142f4", "#e52592"][i % 5] }}>
+                  {(c.name || c.email).charAt(0).toUpperCase()}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
+                  <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function InlineReplyComposer({
   mode,
   defaults,
@@ -3211,12 +3352,26 @@ function InlineReplyComposer({
   const [activeContactField, setActiveContactField] = useState<"to" | "cc" | "bcc" | null>(null);
   const [contactQuery, setContactQuery] = useState("");
   const [showQuotedText, setShowQuotedText] = useState(false);
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [linkDialogUrl, setLinkDialogUrl] = useState("");
   const contactDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const editorRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const doContactSearch = (field: "to" | "cc" | "bcc", query: string) => {
+    setActiveContactField(field);
+    if (contactDebounceRef.current) clearTimeout(contactDebounceRef.current);
+    if (!query || query.length < 2) { setContactSuggestions([]); return; }
+    contactDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/contacts?q=${encodeURIComponent(query)}`, { credentials: "include" });
+        setContactSuggestions((await res.json()).slice(0, 8));
+      } catch { setContactSuggestions([]); }
+    }, 200);
+  };
 
   const processFiles = (files: FileList | File[]) => {
     Array.from(files).forEach(file => {
@@ -3273,8 +3428,8 @@ function InlineReplyComposer({
   };
 
   const execCommand = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
     editorRef.current?.focus();
+    document.execCommand(command, false, value);
     syncBody();
   };
 
@@ -3465,73 +3620,48 @@ function InlineReplyComposer({
             )}
           </div>
 
-          <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-            <span className="text-sm text-[#5f6368] w-12">To</span>
-            <input
+          <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+            <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">To</span>
+            <ChipInput
               value={to}
-              onChange={(e) => handleContactFieldChange("to", e.target.value)}
-              onFocus={() => setActiveContactField("to")}
-              onBlur={() => setTimeout(() => { if (activeContactField === "to") setContactSuggestions([]); }, 200)}
-              className="flex-1 text-sm outline-none"
+              onChange={(val) => { setTo(val); setContactSuggestions([]); }}
+              onSearch={(q) => doContactSearch("to", q)}
+              onBlurClear={() => { if (activeContactField === "to") setContactSuggestions([]); }}
+              suggestions={activeContactField === "to" ? contactSuggestions : []}
               placeholder="Recipients"
-              data-testid="input-inline-to"
-              autoComplete="off"
+              testId="input-inline-to"
+              autoFocus
             />
             {!showCcBcc && (
-              <button onClick={() => setShowCcBcc(true)} className="text-xs text-[#5f6368] hover:text-[#202124] ml-2 whitespace-nowrap" data-testid="button-inline-cc-bcc">
+              <button onClick={() => setShowCcBcc(true)} className="text-xs text-[#5f6368] hover:text-[#202124] ml-2 whitespace-nowrap flex-shrink-0" data-testid="button-inline-cc-bcc">
                 Cc Bcc
               </button>
-            )}
-            {activeContactField === "to" && contactSuggestions.length > 0 && (
-              <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
-                {contactSuggestions.map((c, i) => (
-                  <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors">
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                      <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
             )}
           </div>
 
           {showCcBcc && (
             <>
-              <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-                <span className="text-sm text-[#5f6368] w-12">Cc</span>
-                <input value={cc} onChange={(e) => handleContactFieldChange("cc", e.target.value)} onFocus={() => setActiveContactField("cc")} onBlur={() => setTimeout(() => { if (activeContactField === "cc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" autoComplete="off" data-testid="input-inline-cc" />
-                {activeContactField === "cc" && contactSuggestions.length > 0 && (
-                  <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
-                    {contactSuggestions.map((c, i) => (
-                      <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                          <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+                <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">Cc</span>
+                <ChipInput
+                  value={cc}
+                  onChange={(val) => { setCc(val); setContactSuggestions([]); }}
+                  onSearch={(q) => doContactSearch("cc", q)}
+                  onBlurClear={() => { if (activeContactField === "cc") setContactSuggestions([]); }}
+                  suggestions={activeContactField === "cc" ? contactSuggestions : []}
+                  testId="input-inline-cc"
+                />
               </div>
-              <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-                <span className="text-sm text-[#5f6368] w-12">Bcc</span>
-                <input value={bcc} onChange={(e) => handleContactFieldChange("bcc", e.target.value)} onFocus={() => setActiveContactField("bcc")} onBlur={() => setTimeout(() => { if (activeContactField === "bcc") setContactSuggestions([]); }, 200)} className="flex-1 text-sm outline-none" autoComplete="off" data-testid="input-inline-bcc" />
-                {activeContactField === "bcc" && contactSuggestions.length > 0 && (
-                  <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto">
-                    {contactSuggestions.map((c, i) => (
-                      <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                          <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
+              <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+                <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">Bcc</span>
+                <ChipInput
+                  value={bcc}
+                  onChange={(val) => { setBcc(val); setContactSuggestions([]); }}
+                  onSearch={(q) => doContactSearch("bcc", q)}
+                  onBlurClear={() => { if (activeContactField === "bcc") setContactSuggestions([]); }}
+                  suggestions={activeContactField === "bcc" ? contactSuggestions : []}
+                  testId="input-inline-bcc"
+                />
               </div>
             </>
           )}
@@ -3553,14 +3683,16 @@ function InlineReplyComposer({
           <div className="px-4 pb-2">
             <button
               onClick={() => setShowQuotedText(!showQuotedText)}
-              className="text-xs text-[#5f6368] border border-[#dadce0] rounded px-2 py-0.5 hover:bg-[#f1f3f4] transition-colors"
+              className="inline-flex items-center text-[#5f6368] border border-[#dadce0] rounded px-2 py-0.5 hover:bg-[#f1f3f4] transition-colors"
+              title={showQuotedText ? "Hide trimmed content" : "Show trimmed content"}
               data-testid="button-toggle-quoted"
+              style={{ fontSize: "18px", lineHeight: "1", letterSpacing: "1px" }}
             >
               ···
             </button>
             {showQuotedText && (
               <div
-                className="mt-2 text-sm text-[#5f6368]"
+                className="mt-3 border-l-2 border-[#dadce0] pl-3 text-sm text-[#5f6368]"
                 dangerouslySetInnerHTML={{ __html: defaults.body.substring(defaults.body.indexOf('<div class="gmail_quote">')) }}
               />
             )}
@@ -3625,20 +3757,59 @@ function InlineReplyComposer({
             )}
           </div>
 
-          <button onClick={() => execCommand("bold")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bold"><Bold className="h-4 w-4" /></button>
-          <button onClick={() => execCommand("italic")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Italic"><Italic className="h-4 w-4" /></button>
-          <button onClick={() => execCommand("underline")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Underline"><Underline className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("bold"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bold"><Bold className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("italic"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Italic"><Italic className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("underline"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Underline"><Underline className="h-4 w-4" /></button>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button onClick={() => execCommand("insertUnorderedList")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list"><List className="h-4 w-4" /></button>
-          <button onClick={() => execCommand("insertOrderedList")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list"><List className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertOrderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list"><ListOrdered className="h-4 w-4" /></button>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button onClick={() => { const url = prompt("Enter URL:"); if (url) execCommand("createLink", url); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Insert link">
-            <LinkIcon className="h-4 w-4" />
-          </button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("undo"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Undo (Ctrl+Z)" data-testid="button-inline-undo"><Undo2 className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("redo"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Redo (Ctrl+Y)" data-testid="button-inline-redo"><Redo2 className="h-4 w-4" /></button>
+
+          <div className="h-5 w-px bg-[#dadce0] mx-1" />
+
+          <div className="relative">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); editorRef.current?.focus(); setShowLinkDialog(v => !v); setLinkDialogUrl(""); }}
+              className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]"
+              title="Insert link"
+              data-testid="button-inline-link"
+            >
+              <LinkIcon className="h-4 w-4" />
+            </button>
+            {showLinkDialog && (
+              <div className="absolute bottom-full left-0 mb-2 bg-white border border-[#dadce0] rounded-xl shadow-xl p-3 w-72 z-20" data-testid="link-dialog-inline">
+                <div className="text-xs font-medium text-[#202124] mb-2">Insert link</div>
+                <input
+                  type="url"
+                  placeholder="https://"
+                  value={linkDialogUrl}
+                  onChange={e => setLinkDialogUrl(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && linkDialogUrl) { execCommand("createLink", linkDialogUrl.startsWith("http") ? linkDialogUrl : "https://" + linkDialogUrl); setShowLinkDialog(false); setLinkDialogUrl(""); }
+                    if (e.key === "Escape") { setShowLinkDialog(false); setLinkDialogUrl(""); }
+                  }}
+                  className="w-full text-sm border border-[#dadce0] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0b57d0] mb-2"
+                  autoFocus
+                  data-testid="input-link-url-inline"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => { setShowLinkDialog(false); setLinkDialogUrl(""); }} className="text-xs px-3 py-1.5 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">Cancel</button>
+                  <button
+                    onClick={() => { if (linkDialogUrl) execCommand("createLink", linkDialogUrl.startsWith("http") ? linkDialogUrl : "https://" + linkDialogUrl); setShowLinkDialog(false); setLinkDialogUrl(""); }}
+                    disabled={!linkDialogUrl}
+                    className="text-xs px-3 py-1.5 bg-[#0b57d0] text-white rounded-lg hover:bg-[#0842a0] disabled:opacity-50"
+                    data-testid="button-apply-link-inline"
+                  >Apply</button>
+                </div>
+              </div>
+            )}
+          </div>
           <label htmlFor="file-input-inline" className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368] cursor-pointer" title="Attach file">
             <Paperclip className="h-4 w-4" />
           </label>
@@ -3790,8 +3961,26 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   const [isDragOver, setIsDragOver] = useState(false);
   const [scheduledFor, setScheduledFor] = useState<string>("");
   const [showScheduleMenu, setShowScheduleMenu] = useState(false);
+  const [quotedContent, setQuotedContent] = useState("");
+  const [showQuotedText, setShowQuotedText] = useState(false);
+  const [showLinkDialog, setShowLinkDialog] = useState(false);
+  const [linkDialogUrl, setLinkDialogUrl] = useState("");
+  const quotedContentRef = useRef("");
   const queryClient = useQueryClient();
   const { toast } = useToast();
+
+  const doContactSearch = (field: "to" | "cc" | "bcc", query: string) => {
+    userHasEditedRef.current = true;
+    setActiveContactField(field);
+    if (contactDebounceRef.current) clearTimeout(contactDebounceRef.current);
+    if (!query || query.length < 2) { setContactSuggestions([]); return; }
+    contactDebounceRef.current = setTimeout(async () => {
+      try {
+        const res = await fetch(`/api/contacts?q=${encodeURIComponent(query)}`, { credentials: "include" });
+        setContactSuggestions((await res.json()).slice(0, 8));
+      } catch { setContactSuggestions([]); }
+    }, 150);
+  };
 
   const processFiles = (files: FileList | File[]) => {
     Array.from(files).forEach(file => {
@@ -3812,8 +4001,18 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
       if (defaults.cc) { setCc(defaults.cc); setShowCcBcc(true); }
       if (defaults.subject) setSubject(defaults.subject);
       if (defaults.body) {
-        setBody(defaults.body);
-        if (editorRef.current) editorRef.current.innerHTML = defaults.body;
+        const quoteIdx = defaults.body.indexOf('<div class="gmail_quote">');
+        if (quoteIdx > -1) {
+          const editorPart = defaults.body.substring(0, quoteIdx);
+          const quotePart = defaults.body.substring(quoteIdx);
+          quotedContentRef.current = quotePart;
+          setQuotedContent(quotePart);
+          setBody(editorPart + quotePart);
+          if (editorRef.current) editorRef.current.innerHTML = editorPart;
+        } else {
+          setBody(defaults.body);
+          if (editorRef.current) editorRef.current.innerHTML = defaults.body;
+        }
       }
       if (defaults.inReplyTo) setInReplyTo(defaults.inReplyTo);
       if (defaults.references) setReferences(defaults.references);
@@ -3821,6 +4020,9 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
     if (!open) {
       defaultsAppliedRef.current = false;
       userHasEditedRef.current = false;
+      quotedContentRef.current = "";
+      setQuotedContent("");
+      setShowQuotedText(false);
     }
   }, [open, defaults]);
 
@@ -3981,14 +4183,14 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   };
 
   const execCommand = (command: string, value?: string) => {
-    document.execCommand(command, false, value);
     editorRef.current?.focus();
+    document.execCommand(command, false, value);
     syncBody();
   };
 
   const syncBody = () => {
     if (editorRef.current) {
-      setBody(editorRef.current.innerHTML);
+      setBody(editorRef.current.innerHTML + quotedContentRef.current);
     }
   };
 
@@ -4213,96 +4415,52 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
             )}
           </div>
 
-          <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-            <span className="text-sm text-[#5f6368] w-12">To</span>
-            <input
+          <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+            <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">To</span>
+            <ChipInput
               value={to}
-              onChange={(e) => handleContactFieldChange("to", e.target.value)}
-              onFocus={() => setActiveContactField("to")}
-              onBlur={() => setTimeout(() => { if (activeContactField === "to") setContactSuggestions([]); }, 200)}
-              className="flex-1 text-sm outline-none"
+              onChange={(val) => { userHasEditedRef.current = true; setTo(val); setContactSuggestions([]); }}
+              onSearch={(q) => doContactSearch("to", q)}
+              onBlurClear={() => { if (activeContactField === "to") setContactSuggestions([]); }}
+              suggestions={activeContactField === "to" ? contactSuggestions : []}
               placeholder="Recipients"
+              testId="input-compose-to"
               autoFocus={!defaults?.to}
-              autoComplete="off"
-              data-testid="input-compose-to"
             />
             {!showCcBcc && (
               <button
                 onClick={() => setShowCcBcc(true)}
-                className="text-xs text-[#5f6368] hover:text-[#202124] ml-2 whitespace-nowrap"
+                className="text-xs text-[#5f6368] hover:text-[#202124] ml-2 whitespace-nowrap flex-shrink-0"
                 data-testid="button-show-cc-bcc"
               >
                 Cc Bcc
               </button>
             )}
-            {activeContactField === "to" && contactSuggestions.length > 0 && (
-              <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto" data-testid="contact-suggestions-to">
-                {contactSuggestions.map((c, i) => (
-                  <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors" data-testid={`contact-suggestion-${i}`}>
-                    <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                    <div className="min-w-0 flex-1">
-                      <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                      <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                    </div>
-                  </button>
-                ))}
-              </div>
-            )}
           </div>
 
           {showCcBcc && (
             <>
-              <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-                <span className="text-sm text-[#5f6368] w-12">Cc</span>
-                <input
+              <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+                <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">Cc</span>
+                <ChipInput
                   value={cc}
-                  onChange={(e) => handleContactFieldChange("cc", e.target.value)}
-                  onFocus={() => setActiveContactField("cc")}
-                  onBlur={() => setTimeout(() => { if (activeContactField === "cc") setContactSuggestions([]); }, 200)}
-                  className="flex-1 text-sm outline-none"
-                  placeholder=""
-                  autoComplete="off"
-                  data-testid="input-compose-cc"
+                  onChange={(val) => { userHasEditedRef.current = true; setCc(val); setContactSuggestions([]); }}
+                  onSearch={(q) => doContactSearch("cc", q)}
+                  onBlurClear={() => { if (activeContactField === "cc") setContactSuggestions([]); }}
+                  suggestions={activeContactField === "cc" ? contactSuggestions : []}
+                  testId="input-compose-cc"
                 />
-                {activeContactField === "cc" && contactSuggestions.length > 0 && (
-                  <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto" data-testid="contact-suggestions-cc">
-                    {contactSuggestions.map((c, i) => (
-                      <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                          <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
-              <div className="relative flex items-center border-b border-[#e0e0e0] py-1.5">
-                <span className="text-sm text-[#5f6368] w-12">Bcc</span>
-                <input
+              <div className="flex items-center border-b border-[#e0e0e0] py-1.5 gap-1.5">
+                <span className="text-sm text-[#5f6368] w-12 flex-shrink-0">Bcc</span>
+                <ChipInput
                   value={bcc}
-                  onChange={(e) => handleContactFieldChange("bcc", e.target.value)}
-                  onFocus={() => setActiveContactField("bcc")}
-                  onBlur={() => setTimeout(() => { if (activeContactField === "bcc") setContactSuggestions([]); }, 200)}
-                  className="flex-1 text-sm outline-none"
-                  placeholder=""
-                  autoComplete="off"
-                  data-testid="input-compose-bcc"
+                  onChange={(val) => { userHasEditedRef.current = true; setBcc(val); setContactSuggestions([]); }}
+                  onSearch={(q) => doContactSearch("bcc", q)}
+                  onBlurClear={() => { if (activeContactField === "bcc") setContactSuggestions([]); }}
+                  suggestions={activeContactField === "bcc" ? contactSuggestions : []}
+                  testId="input-compose-bcc"
                 />
-                {activeContactField === "bcc" && contactSuggestions.length > 0 && (
-                  <div className="absolute left-12 top-full mt-1 bg-white border border-[#dadce0] rounded-lg shadow-lg py-1 w-[360px] z-30 max-h-[320px] overflow-y-auto" data-testid="contact-suggestions-bcc">
-                    {contactSuggestions.map((c, i) => (
-                      <button key={i} onMouseDown={(e) => { e.preventDefault(); selectContact(c); }} className="w-full flex items-center gap-3 px-3 py-2 text-left hover:bg-[#f1f3f4] transition-colors">
-                        <div className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium flex-shrink-0" style={{backgroundColor: ["#1a73e8","#e8710a","#137333","#a142f4","#e52592"][i % 5]}}>{(c.name || c.email).charAt(0).toUpperCase()}</div>
-                        <div className="min-w-0 flex-1">
-                          <div className="text-sm text-[#202124] truncate">{c.name || c.email}</div>
-                          <div className="text-xs text-[#5f6368] truncate">{c.email}</div>
-                        </div>
-                      </button>
-                    ))}
-                  </div>
-                )}
               </div>
             </>
           )}
@@ -4329,6 +4487,26 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           style={{ wordBreak: "break-word" }}
           data-testid="input-compose-body"
         />
+
+        {quotedContent && (
+          <div className="px-3 pb-2">
+            <button
+              onClick={() => setShowQuotedText(!showQuotedText)}
+              className="inline-flex items-center text-[#5f6368] border border-[#dadce0] rounded px-2 py-0.5 hover:bg-[#f1f3f4] transition-colors"
+              title={showQuotedText ? "Hide trimmed content" : "Show trimmed content"}
+              data-testid="button-toggle-quoted-compose"
+              style={{ fontSize: "18px", lineHeight: "1", letterSpacing: "1px" }}
+            >
+              ···
+            </button>
+            {showQuotedText && (
+              <div
+                className="mt-3 border-l-2 border-[#dadce0] pl-3 text-sm text-[#5f6368]"
+                dangerouslySetInnerHTML={{ __html: quotedContent }}
+              />
+            )}
+          </div>
+        )}
 
         {attachments.length > 0 && (
           <div className="px-3 py-1 border-t border-[#e0e0e0]">
@@ -4450,38 +4628,69 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
             )}
           </div>
 
-          <button onClick={() => execCommand("bold")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bold" data-testid="button-bold">
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("bold"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bold" data-testid="button-bold">
             <Bold className="h-4 w-4" />
           </button>
-          <button onClick={() => execCommand("italic")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Italic" data-testid="button-italic">
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("italic"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Italic" data-testid="button-italic">
             <Italic className="h-4 w-4" />
           </button>
-          <button onClick={() => execCommand("underline")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Underline" data-testid="button-underline">
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("underline"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Underline" data-testid="button-underline">
             <Underline className="h-4 w-4" />
           </button>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button onClick={() => execCommand("insertUnorderedList")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list" data-testid="button-bullet-list">
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertUnorderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Bullet list" data-testid="button-bullet-list">
             <List className="h-4 w-4" />
           </button>
-          <button onClick={() => execCommand("insertOrderedList")} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list" data-testid="button-numbered-list">
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("insertOrderedList"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Numbered list" data-testid="button-numbered-list">
             <ListOrdered className="h-4 w-4" />
           </button>
 
           <div className="h-5 w-px bg-[#dadce0] mx-1" />
 
-          <button
-            onClick={() => {
-              const url = prompt("Enter URL:");
-              if (url) execCommand("createLink", url);
-            }}
-            className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]"
-            title="Insert link"
-            data-testid="button-insert-link"
-          >
-            <LinkIcon className="h-4 w-4" />
-          </button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("undo"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Undo (Ctrl+Z)" data-testid="button-undo"><Undo2 className="h-4 w-4" /></button>
+          <button onMouseDown={(e) => { e.preventDefault(); execCommand("redo"); }} className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]" title="Redo (Ctrl+Y)" data-testid="button-redo"><Redo2 className="h-4 w-4" /></button>
+
+          <div className="h-5 w-px bg-[#dadce0] mx-1" />
+
+          <div className="relative">
+            <button
+              onMouseDown={(e) => { e.preventDefault(); editorRef.current?.focus(); setShowLinkDialog(v => !v); setLinkDialogUrl(""); }}
+              className="p-1.5 rounded hover:bg-[#f1f3f4] text-[#5f6368]"
+              title="Insert link"
+              data-testid="button-insert-link"
+            >
+              <LinkIcon className="h-4 w-4" />
+            </button>
+            {showLinkDialog && (
+              <div className="absolute bottom-full left-0 mb-2 bg-white border border-[#dadce0] rounded-xl shadow-xl p-3 w-72 z-20" data-testid="link-dialog-compose">
+                <div className="text-xs font-medium text-[#202124] mb-2">Insert link</div>
+                <input
+                  type="url"
+                  placeholder="https://"
+                  value={linkDialogUrl}
+                  onChange={e => setLinkDialogUrl(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === "Enter" && linkDialogUrl) { execCommand("createLink", linkDialogUrl.startsWith("http") ? linkDialogUrl : "https://" + linkDialogUrl); setShowLinkDialog(false); setLinkDialogUrl(""); }
+                    if (e.key === "Escape") { setShowLinkDialog(false); setLinkDialogUrl(""); }
+                  }}
+                  className="w-full text-sm border border-[#dadce0] rounded-lg px-3 py-1.5 focus:outline-none focus:border-[#0b57d0] mb-2"
+                  autoFocus
+                  data-testid="input-link-url-compose"
+                />
+                <div className="flex gap-2 justify-end">
+                  <button onClick={() => { setShowLinkDialog(false); setLinkDialogUrl(""); }} className="text-xs px-3 py-1.5 text-[#5f6368] hover:bg-[#f1f3f4] rounded-lg">Cancel</button>
+                  <button
+                    onClick={() => { if (linkDialogUrl) execCommand("createLink", linkDialogUrl.startsWith("http") ? linkDialogUrl : "https://" + linkDialogUrl); setShowLinkDialog(false); setLinkDialogUrl(""); }}
+                    disabled={!linkDialogUrl}
+                    className="text-xs px-3 py-1.5 bg-[#0b57d0] text-white rounded-lg hover:bg-[#0842a0] disabled:opacity-50"
+                    data-testid="button-apply-link-compose"
+                  >Apply</button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <label
             htmlFor="file-input-compose"
@@ -4705,7 +4914,7 @@ function LogsPanel() {
 }
 
 function AboutPanel() {
-  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.5.5"]));
+  const [openVersions, setOpenVersions] = useState<Set<string>>(new Set(["v0.8.7"]));
 
   const toggleVersion = (v: string) => {
     setOpenVersions(prev => {
@@ -4718,8 +4927,23 @@ function AboutPanel() {
 
   const versions = [
     {
-      version: "v0.8.5.5",
+      version: "v0.8.7",
       label: "Latest",
+      date: "May 2026",
+      summary: "IMAP IDLE push delivery, send retry queue, chip recipient inputs, link dialog, undo/redo, mobile search",
+      items: [
+        "IMAP IDLE: IMAP accounts now maintain a persistent connection — new mail is delivered instantly rather than waiting for the next polling interval",
+        "Send retry queue: if an SMTP send fails, LocalMail automatically retries at 1-minute, 5-minute, and 15-minute intervals before marking the email as permanently failed",
+        "Chip-style recipient inputs: To, Cc and Bcc fields now use pill chips — press comma, Enter or Tab to commit an address; Backspace removes the last chip; chips can be drag-to-reordered",
+        "Contact autocomplete is shown inline within the ChipInput dropdown — no separate suggestion overlay",
+        "Link dialog: the Insert Link toolbar button now opens an inline popover with a URL field instead of a browser prompt",
+        "Undo / Redo buttons added to both the inline reply composer and the compose panel toolbars",
+        "Mobile: search bar now expands to full width on small screens (sm:w-[40%] on wider viewports)",
+      ],
+    },
+    {
+      version: "v0.8.5.5",
+      label: "",
       date: "May 2026",
       summary: "Performance: server-side pagination, O(1) message-ID lookups, faster sorting",
       items: [

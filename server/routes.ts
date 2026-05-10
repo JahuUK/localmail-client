@@ -4,6 +4,9 @@ import { globalStorage, verifyPassword, rehashIfNeeded, type UserStorage } from 
 import { insertMailAccountSchema, composeEmailSchema, insertLabelSchema, generalSettingsSchema, insertCustomFolderSchema, insertEmailRuleSchema, backupConfigSchema, type Email, type MailAccount } from "@shared/schema";
 import { fetchEmails, fetchEmailsByMessageIds, sendSmtpEmail, testIncomingConnection, testSmtpConnection, saveAttachmentsToDisk, getAttachmentPath } from "./mail";
 import { testConnection, runBackup, listBackups, downloadBackup, restoreBackup, startScheduledBackup, stopScheduledBackup, createBackupArchive, getNextBackupTime } from "./backup";
+import { startImapIdleSession, stopImapIdleSession } from "./imapIdle.js";
+import { enqueueSend } from "./sendQueue.js";
+import { addLog, userLogs, type LogEntry } from "./logger.js";
 import { resolve } from "path";
 import { randomUUID } from "crypto";
 import multer from "multer";
@@ -168,20 +171,94 @@ function detectAndBlockTrackingPixels(html: string): { html: string; count: numb
   return { html: processed, count };
 }
 
-type LogEntry = { timestamp: string; level: "info" | "warn" | "error" | "success"; source: string; message: string };
-const userLogs: Map<string, LogEntry[]> = new Map();
-const MAX_LOGS = 2000;
-
-export function addLog(userId: string, level: LogEntry["level"], source: string, message: string) {
-  if (!userLogs.has(userId)) userLogs.set(userId, []);
-  const logs = userLogs.get(userId)!;
-  logs.push({ timestamp: new Date().toISOString(), level, source, message });
-  if (logs.length > MAX_LOGS) logs.splice(0, logs.length - MAX_LOGS);
-}
-
-export { userLogs };
+export { addLog, userLogs };
 
 const runningFetches = new Set<string>();
+
+/**
+ * Run a single fetch cycle for one account — shared by auto-fetch timers and
+ * IMAP IDLE callbacks so the import logic stays in one place.
+ */
+async function runFetchCycle(
+  userId: string,
+  accountId: string,
+  logPrefix: string,
+): Promise<void> {
+  const key = `${userId}:${accountId}`;
+  if (runningFetches.has(key)) return; // previous fetch still in progress
+  runningFetches.add(key);
+  try {
+    const storage = globalStorage.getUserStorage(userId);
+    const account = await storage.getAccount(accountId);
+    if (!account) return;
+
+    const proto = (account.protocol || "pop3").toUpperCase();
+    addLog(userId, "info", logPrefix, `Fetching emails for ${account.email} via ${proto}...`);
+    const startTime = Date.now();
+    const knownIds = storage.getKnownMessageIds();
+    const results = await fetchEmails(account, knownIds);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    addLog(userId, "info", logPrefix, `${proto} server returned ${results.length} message(s) for ${account.email} in ${elapsed}s`);
+
+    const allAccounts = await storage.getAccounts();
+    let imported = 0;
+    let duplicates = 0;
+    for (const result of results) {
+      if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
+        duplicates++;
+        continue;
+      }
+      // Determine the true owner of this email: if a configured account appears in
+      // the To/Cc recipients, use that account for the label — not the fetching account.
+      const toAndCc = [...(result.email.to || []), ...(result.email.cc || [])];
+      const recipientAccount = allAccounts.find(a =>
+        a.email.toLowerCase() !== account.email.toLowerCase() &&
+        toAndCc.some(r => r.email?.toLowerCase() === a.email.toLowerCase())
+      );
+      const ownerEmail = recipientAccount ? recipientAccount.email : account.email;
+      result.email.accountEmail = ownerEmail;
+      // If the sender address matches the fetching account, treat as a sent email
+      if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
+        result.email.folder = "sent";
+        result.email.isUnread = false;
+      }
+      let accountLabel = await storage.getLabelByName(ownerEmail);
+      if (!accountLabel) {
+        accountLabel = await storage.createLabel({ name: ownerEmail, color: "#1a73e8" });
+      }
+      const labels = [...(result.email.labels || [])];
+      if (!labels.includes(accountLabel.id)) labels.push(accountLabel.id);
+      result.email.labels = labels;
+
+      result.email = storage.applyRulesToEmail(result.email);
+
+      const created = await storage.createEmail(result.email);
+      if (result.rawAttachments.length > 0) {
+        saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
+        addLog(userId, "info", logPrefix, `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
+      }
+      if (created.folder === "inbox") {
+        maybeSendVacationReply(userId, storage, created, account).catch(() => {});
+      }
+      imported++;
+      // Yield to the event loop between emails so HTTP requests aren't starved.
+      await new Promise(resolve => setImmediate(resolve));
+    }
+    await storage.updateAccount(accountId, { lastFetched: new Date().toISOString() });
+    const skipMsg = duplicates > 0 ? ` (${duplicates} duplicates skipped)` : "";
+    if (imported > 0) {
+      addLog(userId, "success", logPrefix, `${imported} new email(s) imported for ${account.email}${skipMsg}`);
+      console.log(`[${logPrefix}] ${imported} new emails for ${account.email}${skipMsg}`);
+    } else {
+      addLog(userId, "info", logPrefix, `No new emails for ${account.email}${skipMsg}`);
+    }
+  } catch (err: any) {
+    addLog(userId, "error", logPrefix, `Error: ${err.message}`);
+    console.error(`[${logPrefix}] Error for ${userId}:${accountId}: ${err.message}`);
+  } finally {
+    runningFetches.delete(key);
+  }
+}
 
 function startAutoFetch(userId: string, accountId: string, intervalMinutes: number) {
   const key = `${userId}:${accountId}`;
@@ -190,88 +267,14 @@ function startAutoFetch(userId: string, accountId: string, intervalMinutes: numb
   const ms = intervalMinutes * 60 * 1000;
   addLog(userId, "info", "Auto-fetch", `Timer started for account ${accountId} (every ${intervalMinutes} min)`);
   const timer = setInterval(async () => {
-    // Skip this tick if the previous fetch for this account is still running
-    // (e.g. slow server, long timeout). Prevents stacking concurrent fetches.
-    if (runningFetches.has(key)) return;
-    runningFetches.add(key);
-    try {
-      const storage = globalStorage.getUserStorage(userId);
-      const account = await storage.getAccount(accountId);
-      if (!account || account.autoFetchEnabled === false) {
-        addLog(userId, "warn", "Auto-fetch", `Account ${accountId} disabled or removed — stopping timer`);
-        stopAutoFetch(userId, accountId);
-        return;
-      }
-
-      const proto = (account.protocol || "pop3").toUpperCase();
-      addLog(userId, "info", "Auto-fetch", `Fetching emails for ${account.email} via ${proto}...`);
-      const startTime = Date.now();
-      const knownIds = storage.getKnownMessageIds();
-      const results = await fetchEmails(account, knownIds);
-      const fetchElapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      addLog(userId, "info", "Auto-fetch", `${proto} server returned ${results.length} message(s) for ${account.email} in ${fetchElapsed}s`);
-      const allAccounts = await storage.getAccounts();
-      let imported = 0;
-      let duplicates = 0;
-      for (const result of results) {
-        if (result.email.messageId && storage.hasMessageId(result.email.messageId)) {
-          duplicates++;
-          continue;
-        }
-        // Determine the true owner of this email: if a configured account appears in
-        // the To/Cc recipients, use that account for the label — not the fetching account.
-        // This handles Gmail's "Check mail from other accounts" feature which delivers
-        // messages addressed to another mailbox via the Gmail POP3 stream.
-        const toAndCc = [...(result.email.to || []), ...(result.email.cc || [])];
-        const recipientAccount = allAccounts.find(a =>
-          a.email.toLowerCase() !== account.email.toLowerCase() &&
-          toAndCc.some(r => r.email?.toLowerCase() === a.email.toLowerCase())
-        );
-        const ownerEmail = recipientAccount ? recipientAccount.email : account.email;
-        result.email.accountEmail = ownerEmail;
-        // If the sender address matches the fetching account, treat as a sent email
-        // (some servers return outgoing mail in the same mailbox as incoming)
-        if (result.email.sender.email.toLowerCase() === account.email.toLowerCase()) {
-          result.email.folder = "sent";
-          result.email.isUnread = false;
-        }
-        let accountLabel = await storage.getLabelByName(ownerEmail);
-        if (!accountLabel) {
-          accountLabel = await storage.createLabel({ name: ownerEmail, color: "#1a73e8" });
-        }
-        const labels = [...(result.email.labels || [])];
-        if (!labels.includes(accountLabel.id)) labels.push(accountLabel.id);
-        result.email.labels = labels;
-
-        result.email = storage.applyRulesToEmail(result.email);
-
-        const created = await storage.createEmail(result.email);
-        if (result.rawAttachments.length > 0) {
-          saveAttachmentsToDisk(created.id, result.rawAttachments, storage.getAttachmentsDir());
-          addLog(userId, "info", "Auto-fetch", `Saved ${result.rawAttachments.length} attachment(s) for "${created.subject}"`);
-        }
-        if (created.folder === "inbox") {
-          maybeSendVacationReply(userId, storage, created, account).catch(() => {});
-        }
-        imported++;
-        // Yield to the event loop between each email so HTTP requests (e.g. reading
-        // an email) are not starved while a large batch is being processed.
-        await new Promise(resolve => setImmediate(resolve));
-      }
-      await storage.updateAccount(accountId, { lastFetched: new Date().toISOString() });
-      const skipMsg = duplicates > 0 ? ` (${duplicates} duplicates skipped)` : "";
-      if (imported > 0) {
-        addLog(userId, "success", "Auto-fetch", `${imported} new emails imported for ${account.email}${skipMsg}`);
-        console.log(`Auto-fetch: ${imported} new emails for ${account.email}${skipMsg}`);
-      } else {
-        addLog(userId, "info", "Auto-fetch", `No new emails for ${account.email}${skipMsg}`);
-      }
-    } catch (err: any) {
-      addLog(userId, "error", "Auto-fetch", `Error fetching ${key}: ${err.message}`);
-      console.error(`Auto-fetch error for ${key}: ${err.message}`);
-    } finally {
-      runningFetches.delete(key);
+    const storage = globalStorage.getUserStorage(userId);
+    const account = await storage.getAccount(accountId).catch(() => null);
+    if (!account || account.autoFetchEnabled === false) {
+      addLog(userId, "warn", "Auto-fetch", `Account ${accountId} disabled or removed — stopping timer`);
+      stopAutoFetch(userId, accountId);
+      return;
     }
+    await runFetchCycle(userId, accountId, "Auto-fetch");
   }, ms);
 
   autoFetchTimers.set(key, timer);
@@ -328,6 +331,13 @@ async function initAutoFetchForAllUsers() {
           // fire simultaneously and pile CPU work into a single spike.
           setTimeout(() => startAutoFetch(user.id, account.id, interval), staggerMs);
           staggerMs += 10_000;
+          // Start an IMAP IDLE connection so new mail triggers an instant fetch
+          // rather than waiting for the next polling interval.
+          if ((account.protocol || "pop3") === "imap") {
+            startImapIdleSession(account, user.id, (acctId, uid) => {
+              runFetchCycle(uid, acctId, "IDLE fetch").catch(() => {});
+            });
+          }
         }
       }
     } catch {}
@@ -930,8 +940,19 @@ export async function registerRoutes(
           await storage.updateEmail(email.id, { sendStatus: "sent" });
         })
         .catch(async (err: any) => {
-          addLog(userId, "error", "SMTP send", `Failed to send to ${to}: ${err.message}`);
-          await storage.updateEmail(email.id, { sendStatus: "failed", sendError: err.message });
+          addLog(userId, "warn", "SMTP send", `Initial send failed, queuing for retry: ${err.message}`);
+          enqueueSend(
+            userId, account, to, subject, body, cc, bcc,
+            { inReplyTo, references, attachments: composeAttachments },
+            async () => {
+              addLog(userId, "success", "SMTP send", `Retry succeeded for email to ${to}`);
+              await storage.updateEmail(email.id, { sendStatus: "sent" });
+            },
+            async (retryErr: Error) => {
+              addLog(userId, "error", "SMTP send", `All retries failed for ${to}: ${retryErr.message}`);
+              await storage.updateEmail(email.id, { sendStatus: "failed", sendError: retryErr.message });
+            },
+          );
         });
     } else {
       addLog(userId, "info", "Compose", `Email composed to ${to} (local only, no SMTP account)`);
