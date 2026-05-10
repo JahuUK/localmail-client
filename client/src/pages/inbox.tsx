@@ -3447,7 +3447,8 @@ function InlineReplyComposer({
       const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
     }
     const range = sel.getRangeAt(0);
-    let node: Node | null = range.commonAncestorContainer;
+    // Walk up from the cursor to find an existing list of this type
+    let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
       if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
@@ -3464,24 +3465,54 @@ function InlineReplyComposer({
       });
       parent.replaceChild(frag, existingList);
     } else {
-      let blockNode: Node | null = range.commonAncestorContainer;
-      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
-      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      // Find the direct child of the editor that contains the cursor.
+      // Guard against starting AT the editor itself (empty editor case).
+      let directChild: Node | null = range.startContainer === editor
+        ? null
+        : range.startContainer;
+      if (directChild) {
+        while (directChild && directChild.parentNode !== editor) directChild = directChild.parentNode;
+      }
       const list = document.createElement(tag);
       const li = document.createElement("li");
-      if (blockNode && blockNode !== editor) {
-        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+      if (directChild && directChild !== editor) {
+        li.innerHTML = directChild.nodeType === Node.TEXT_NODE
+          ? (directChild.textContent || "")
+          : ((directChild as HTMLElement).innerHTML || "<br>");
         list.appendChild(li);
-        editor.insertBefore(list, blockNode);
-        editor.removeChild(blockNode);
+        editor.insertBefore(list, directChild);
+        editor.removeChild(directChild);
       } else {
-        li.innerHTML = "<br>"; list.appendChild(li);
-        try { range.insertNode(list); } catch { editor.appendChild(list); }
+        li.innerHTML = "<br>";
+        list.appendChild(li);
+        editor.innerHTML = "";
+        editor.appendChild(list);
       }
       const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
       sel.removeAllRanges(); sel.addRange(nr);
     }
     syncBody();
+  };
+
+  const handleAutoList = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== " ") return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (container.nodeType !== Node.TEXT_NODE) return;
+    const text = (container.textContent ?? "").slice(0, range.startOffset);
+    let listTag: "ul" | "ol" | null = null;
+    let prefixLen = 0;
+    if (text === "-" || text === "*") { listTag = "ul"; prefixLen = text.length; }
+    else if (text === "1." || text === "1)") { listTag = "ol"; prefixLen = text.length; }
+    if (!listTag) return;
+    e.preventDefault();
+    const del = document.createRange();
+    del.setStart(container, range.startOffset - prefixLen);
+    del.setEnd(container, range.startOffset);
+    del.deleteContents();
+    toggleList(listTag);
   };
 
   const handlePaste = (e: React.ClipboardEvent) => {
@@ -3724,7 +3755,7 @@ function InlineReplyComposer({
           suppressContentEditableWarning
           onInput={syncBody}
           onPaste={handlePaste}
-          onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
+          onKeyDown={(e) => { handleAutoList(e); if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="px-4 text-sm outline-none py-3 min-h-[120px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-inline-body"
@@ -4253,7 +4284,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
       const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
     }
     const range = sel.getRangeAt(0);
-    let node: Node | null = range.commonAncestorContainer;
+    let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
       if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
@@ -4270,24 +4301,52 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
       });
       parent.replaceChild(frag, existingList);
     } else {
-      let blockNode: Node | null = range.commonAncestorContainer;
-      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
-      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      let directChild: Node | null = range.startContainer === editor
+        ? null
+        : range.startContainer;
+      if (directChild) {
+        while (directChild && directChild.parentNode !== editor) directChild = directChild.parentNode;
+      }
       const list = document.createElement(tag);
       const li = document.createElement("li");
-      if (blockNode && blockNode !== editor) {
-        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+      if (directChild && directChild !== editor) {
+        li.innerHTML = directChild.nodeType === Node.TEXT_NODE
+          ? (directChild.textContent || "")
+          : ((directChild as HTMLElement).innerHTML || "<br>");
         list.appendChild(li);
-        editor.insertBefore(list, blockNode);
-        editor.removeChild(blockNode);
+        editor.insertBefore(list, directChild);
+        editor.removeChild(directChild);
       } else {
-        li.innerHTML = "<br>"; list.appendChild(li);
-        try { range.insertNode(list); } catch { editor.appendChild(list); }
+        li.innerHTML = "<br>";
+        list.appendChild(li);
+        editor.innerHTML = "";
+        editor.appendChild(list);
       }
       const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
       sel.removeAllRanges(); sel.addRange(nr);
     }
     syncBody();
+  };
+
+  const handleAutoList = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== " ") return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (container.nodeType !== Node.TEXT_NODE) return;
+    const text = (container.textContent ?? "").slice(0, range.startOffset);
+    let listTag: "ul" | "ol" | null = null;
+    let prefixLen = 0;
+    if (text === "-" || text === "*") { listTag = "ul"; prefixLen = text.length; }
+    else if (text === "1." || text === "1)") { listTag = "ol"; prefixLen = text.length; }
+    if (!listTag) return;
+    e.preventDefault();
+    const del = document.createRange();
+    del.setStart(container, range.startOffset - prefixLen);
+    del.setEnd(container, range.startOffset);
+    del.deleteContents();
+    toggleList(listTag);
   };
 
   const syncBody = () => {
@@ -4584,7 +4643,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           suppressContentEditableWarning
           onInput={() => { userHasEditedRef.current = true; syncBody(); }}
           onPaste={handlePaste}
-          onKeyDown={(e) => { if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
+          onKeyDown={(e) => { handleAutoList(e); if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
           className="flex-1 px-3 text-sm outline-none py-2 overflow-y-auto min-h-[80px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-compose-body"
@@ -6651,7 +6710,7 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
       const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
     }
     const range = sel.getRangeAt(0);
-    let node: Node | null = range.commonAncestorContainer;
+    let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
       if (node.nodeType === Node.ELEMENT_NODE && (node as HTMLElement).tagName === tag.toUpperCase()) { existingList = node as HTMLElement; break; }
@@ -6668,24 +6727,52 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
       });
       parent.replaceChild(frag, existingList);
     } else {
-      let blockNode: Node | null = range.commonAncestorContainer;
-      if (blockNode.nodeType === Node.TEXT_NODE) blockNode = blockNode.parentNode;
-      while (blockNode && blockNode.parentNode !== editor) blockNode = blockNode.parentNode;
+      let directChild: Node | null = range.startContainer === editor
+        ? null
+        : range.startContainer;
+      if (directChild) {
+        while (directChild && directChild.parentNode !== editor) directChild = directChild.parentNode;
+      }
       const list = document.createElement(tag);
       const li = document.createElement("li");
-      if (blockNode && blockNode !== editor) {
-        li.innerHTML = (blockNode as HTMLElement).innerHTML || "<br>";
+      if (directChild && directChild !== editor) {
+        li.innerHTML = directChild.nodeType === Node.TEXT_NODE
+          ? (directChild.textContent || "")
+          : ((directChild as HTMLElement).innerHTML || "<br>");
         list.appendChild(li);
-        editor.insertBefore(list, blockNode);
-        editor.removeChild(blockNode);
+        editor.insertBefore(list, directChild);
+        editor.removeChild(directChild);
       } else {
-        li.innerHTML = "<br>"; list.appendChild(li);
-        try { range.insertNode(list); } catch { editor.appendChild(list); }
+        li.innerHTML = "<br>";
+        list.appendChild(li);
+        editor.innerHTML = "";
+        editor.appendChild(list);
       }
       const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
       sel.removeAllRanges(); sel.addRange(nr);
     }
     if (editorRef.current) onChange(editorRef.current.innerHTML);
+  };
+
+  const handleAutoList = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== " ") return;
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return;
+    const range = sel.getRangeAt(0);
+    const container = range.startContainer;
+    if (container.nodeType !== Node.TEXT_NODE) return;
+    const text = (container.textContent ?? "").slice(0, range.startOffset);
+    let listTag: "ul" | "ol" | null = null;
+    let prefixLen = 0;
+    if (text === "-" || text === "*") { listTag = "ul"; prefixLen = text.length; }
+    else if (text === "1." || text === "1)") { listTag = "ol"; prefixLen = text.length; }
+    if (!listTag) return;
+    e.preventDefault();
+    const del = document.createRange();
+    del.setStart(container, range.startOffset - prefixLen);
+    del.setEnd(container, range.startOffset);
+    del.deleteContents();
+    toggleList(listTag);
   };
 
   const handleLink = () => {
@@ -6729,6 +6816,7 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
         contentEditable
         suppressContentEditableWarning
         onInput={handleInput}
+        onKeyDown={handleAutoList}
         data-testid="editor-signature"
         data-placeholder="Best regards,&#10;Your Name"
         className="min-h-[110px] px-3 py-2.5 text-sm text-[#202124] outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-[#9aa0a6] empty:before:whitespace-pre"
