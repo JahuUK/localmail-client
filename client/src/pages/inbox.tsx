@@ -3440,14 +3440,16 @@ function InlineReplyComposer({
   const toggleList = (tag: "ul" | "ol") => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.focus();
+    // Only call focus if the selection has drifted outside the editor.
+    // Calling focus() unconditionally resets the caret position in Chrome.
     const sel = window.getSelection();
     if (!sel) return;
-    if (sel.rangeCount === 0) {
-      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    if (sel.rangeCount === 0 || !editor.contains(sel.anchorNode)) {
+      editor.focus();
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false);
+      sel.removeAllRanges(); sel.addRange(r);
     }
     const range = sel.getRangeAt(0);
-    // Walk up from the cursor to find an existing list of this type
     let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
@@ -3756,7 +3758,7 @@ function InlineReplyComposer({
           onInput={syncBody}
           onPaste={handlePaste}
           onKeyDown={(e) => { handleAutoList(e); if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
-          className="px-4 text-sm outline-none py-3 min-h-[120px]"
+          className="compose-editor px-4 text-sm outline-none py-3 min-h-[120px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-inline-body"
         />
@@ -4277,13 +4279,14 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
   const toggleList = (tag: "ul" | "ol") => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.focus();
-    const sel = window.getSelection();
-    if (!sel) return;
-    if (sel.rangeCount === 0) {
-      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    const sel2 = window.getSelection();
+    if (!sel2) return;
+    if (sel2.rangeCount === 0 || !editor.contains(sel2.anchorNode)) {
+      editor.focus();
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false);
+      sel2.removeAllRanges(); sel2.addRange(r);
     }
-    const range = sel.getRangeAt(0);
+    const range = sel2.getRangeAt(0);
     let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
@@ -4310,9 +4313,10 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
       const list = document.createElement(tag);
       const li = document.createElement("li");
       if (directChild && directChild !== editor) {
-        li.innerHTML = directChild.nodeType === Node.TEXT_NODE
+        const content = directChild.nodeType === Node.TEXT_NODE
           ? (directChild.textContent || "")
-          : ((directChild as HTMLElement).innerHTML || "<br>");
+          : ((directChild as HTMLElement).innerHTML || "");
+        li.innerHTML = content || "<br>";
         list.appendChild(li);
         editor.insertBefore(list, directChild);
         editor.removeChild(directChild);
@@ -4323,7 +4327,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
         editor.appendChild(list);
       }
       const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
-      sel.removeAllRanges(); sel.addRange(nr);
+      sel2.removeAllRanges(); sel2.addRange(nr);
     }
     syncBody();
   };
@@ -4644,7 +4648,7 @@ function ComposePanel({ open, onClose, signature, sendCancellation, defaultSendA
           onInput={() => { userHasEditedRef.current = true; syncBody(); }}
           onPaste={handlePaste}
           onKeyDown={(e) => { handleAutoList(e); if ((e.ctrlKey || e.metaKey) && e.key === "Enter") { e.preventDefault(); handleSend(); } }}
-          className="flex-1 px-3 text-sm outline-none py-2 overflow-y-auto min-h-[80px]"
+          className="compose-editor flex-1 px-3 text-sm outline-none py-2 overflow-y-auto min-h-[80px]"
           style={{ wordBreak: "break-word" }}
           data-testid="input-compose-body"
         />
@@ -6703,13 +6707,14 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
   const toggleList = (tag: "ul" | "ol") => {
     const editor = editorRef.current;
     if (!editor) return;
-    editor.focus();
-    const sel = window.getSelection();
-    if (!sel) return;
-    if (sel.rangeCount === 0) {
-      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false); sel.addRange(r);
+    const sel3 = window.getSelection();
+    if (!sel3) return;
+    if (sel3.rangeCount === 0 || !editor.contains(sel3.anchorNode)) {
+      editor.focus();
+      const r = document.createRange(); r.selectNodeContents(editor); r.collapse(false);
+      sel3.removeAllRanges(); sel3.addRange(r);
     }
-    const range = sel.getRangeAt(0);
+    const range = sel3.getRangeAt(0);
     let node: Node | null = range.startContainer;
     let existingList: HTMLElement | null = null;
     while (node && node !== editor) {
@@ -6736,9 +6741,10 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
       const list = document.createElement(tag);
       const li = document.createElement("li");
       if (directChild && directChild !== editor) {
-        li.innerHTML = directChild.nodeType === Node.TEXT_NODE
+        const content = directChild.nodeType === Node.TEXT_NODE
           ? (directChild.textContent || "")
-          : ((directChild as HTMLElement).innerHTML || "<br>");
+          : ((directChild as HTMLElement).innerHTML || "");
+        li.innerHTML = content || "<br>";
         list.appendChild(li);
         editor.insertBefore(list, directChild);
         editor.removeChild(directChild);
@@ -6749,7 +6755,7 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
         editor.appendChild(list);
       }
       const nr = document.createRange(); nr.selectNodeContents(li); nr.collapse(false);
-      sel.removeAllRanges(); sel.addRange(nr);
+      sel3.removeAllRanges(); sel3.addRange(nr);
     }
     if (editorRef.current) onChange(editorRef.current.innerHTML);
   };
@@ -6819,7 +6825,7 @@ function SignatureEditor({ value, onChange }: { value: string; onChange: (html: 
         onKeyDown={handleAutoList}
         data-testid="editor-signature"
         data-placeholder="Best regards,&#10;Your Name"
-        className="min-h-[110px] px-3 py-2.5 text-sm text-[#202124] outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-[#9aa0a6] empty:before:whitespace-pre"
+        className="compose-editor min-h-[110px] px-3 py-2.5 text-sm text-[#202124] outline-none empty:before:content-[attr(data-placeholder)] empty:before:text-[#9aa0a6] empty:before:whitespace-pre"
       />
     </div>
   );
